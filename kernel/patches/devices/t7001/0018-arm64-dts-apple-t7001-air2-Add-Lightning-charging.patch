@@ -25,6 +25,7 @@ again.
 
 Assisted-by: LLM
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
 ---
  arch/arm64/boot/dts/apple/t7001-air2.dtsi | 49 +++++++++++++++++++++++
  1 file changed, 49 insertions(+)
