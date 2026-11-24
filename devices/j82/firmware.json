@@ -422,6 +422,26 @@
           "kext": "com.apple.driver.AppleT7000SmartIO"
         }
       ]
+    },
+    {
+      "destination": "lib/firmware/apple/gfx-t7001.bin",
+      "sha256": "ca558aa5202bb0d36408b13e89dea5c6dde64cdf65c1c9ee8d5f96a5e0c110e7",
+      "steps": [
+        {
+          "step": "agx-g4p-ldr-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/gfx-t7000-border.bin",
+      "sha256": "233ffc1d7db27d9f16db17e23a9ce33082b5a7b72061af3da510bca3c94aff3e",
+      "steps": [
+        {
+          "step": "agx-g4p-border-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] arm64: dts: apple: s800x-6s: Add the CS42L71 headset codec
+
+The IPSW device trees of the iPhone 6s and 6s Plus (N66, N66m, N71,
+N71m, iOS 15.8.8) describe the same headset codec: CS42L71 on SPI1
+(chip select AP GPIO 16, bit period 83 ns), MCA0 as a clock consumer of
+the codec's ASP (iisConfig 4 x 16-bit I2S, SmartIO FIFO 0x180 / trigger
+0xc0), and an aud0-to-pin0 i2s-switch route.
+
+Headphones, the earpiece and analog capture sit on this codec. Speakers
+stay on MCA2. Jack detect (MikeyBus) and analog mic bias are not
+described yet. SPI is run at 1 MHz, as the CS42L81.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/apple/s800x-6s.dtsi | 53 +++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/s800x-6s.dtsi b/arch/arm64/boot/dts/apple/s800x-6s.dtsi
+index 7dba5a1e2..6s-cs42l71 100644
+--- a/arch/arm64/boot/dts/apple/s800x-6s.dtsi
++++ b/arch/arm64/boot/dts/apple/s800x-6s.dtsi
+@@ -224,6 +224,59 @@
+ 		#sound-dai-cells = <0>;
+ 	};
+ };
++
++/*
++ * Headset codec of the iPhone 6s and 6s Plus: CS42L71 on SPI1 (control)
++ * and MCA0 (data). ADT spi1/audio-codec and mca0/audio-codec, iOS 15.8.8,
++ * the same on N66, N66m, N71 and N71m. The codec provides BCLK/LRCK.
++ */
++/ {
++	sound-headset {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "iPhone Headset";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,bitclock-master = <&headset_codec>;
++		simple-audio-card,frame-master = <&headset_codec>;
++		simple-audio-card,widgets = "Headphone", "Headphones",
++					    "Speaker", "Earpiece",
++					    "Microphone", "Internal Mic";
++		simple-audio-card,routing = "Headphones", "HPOUT",
++					    "Earpiece", "EAROUT",
++					    "AMIC", "Internal Mic";
++		simple-audio-card,pin-switches = "Headphones", "Earpiece";
++
++		simple-audio-card,cpu {
++			sound-dai = <&mca0>;
++		};
++
++		headset_codec: simple-audio-card,codec {
++			sound-dai = <&cs42l71>;
++		};
++	};
++};
++
++/* ADT mca0 function-i2s_route: aud0 -> pin0, consumer flags */
++&mca0 {
++	compatible = "apple,s8000-mca-cs42l71";
++	apple,i2s-switch = <&i2s_switch 0 0>;
++	status = "okay";
++};
++
++&spi1 {
++	/* ADT function-spi_cs0: AP GPIO 16, same CS pin as the iPad 5 CS42L81 */
++	cs-gpios = <&pinctrl_ap 16 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	cs42l71: audio-codec@0 {
++		compatible = "cirrus,cs42l71";
++		reg = <0>;
++		/* ADT bit period 83 ns (~12 MHz); 1 MHz until the codec is proven */
++		spi-max-frequency = <1000000>;
++		clocks = <&mca0>;
++		clock-names = "mclk";
++		#sound-dai-cells = <0>;
++	};
++};
+ 
+ &framebuffer0 {
+ 	power-domains = <&ps_disp0 &ps_mipi_dsi>;
+-- 
+2.50.1

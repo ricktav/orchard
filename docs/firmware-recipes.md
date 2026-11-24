@@ -150,8 +150,8 @@ The CLI used to do that; it isn't needed for recipes any more.
 | `vxd-firmware-from-kernelcache@1` | `input` (kernelcache) | the VXD (DEVA) video decoder firmware from AppleD5500 |
 | `agx-g9p-firmware-from-kernelcache@1` | `input` (kernelcache) | the A10 GPU firmware from AGXFirmwareKextG9PRTBuddy |
 | `agx-g5p-ldr-from-kernelcache@1` | `input` (kernelcache) | the A9 GPU firmware (a META LDR) from AGXFirmwareKextG5P; size and digest are pinned |
-| `agx-g4p-ldr-from-kernelcache@1` | `input` (kernelcache) | the A8 GPU firmware (a META LDR) from AGXFirmwareKextG4P: the LDR whose hash is the output's |
-| `agx-g4p-border-from-kernelcache@1` | `input` (kernelcache) | the A8 GPU's border colour table, 0x800 bytes of AGXG4P's data, whose hash is the output's |
+| `agx-g4p-ldr-from-kernelcache@1` | `input` (kernelcache) | a META LDR GPU firmware whose hash is the output's (A8 G4P or A8X G4G) |
+| `agx-g4p-border-from-kernelcache@1` | `input` (kernelcache) | the GPU's border colour table, 0x800 bytes whose hash is the output's (same table on G4P and G4G) |
 | `im4p-payload@1` | `input` | the payload of an IM4P container |
 | `aop-image@1` | `coprocessor` | one image (`AOP`, `AOP_ext`) of an AOP firmware container, the OSSerializeBinary payload of `Firmware/AOP/aopfw-*.im4p` |
 | `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address`, `hbpp_version` | Z2 touch firmware with calibration records |
@@ -290,6 +290,24 @@ The boards' own restore images, compared with it:
 - iPadOS 15.8.8 (19H422; J96, J97): another firmware build (114794 bytes).
   The driver has not run it.
 - Every one of them holds the same border colour table.
+
+## T7001 G4G META firmware
+
+The A8X (iPad Air 2) GPU is a GXA6850 (Apple's G4G). powervr loads
+`apple/gfx-t7001.bin`, the META LDR from `com.apple.AGXFirmwareKextG4G`
+in the board's own iPadOS 15.8.8 (19H422) kernelcache, and the same
+`apple/gfx-t7000-border.bin` table the A8 uses (identical bytes). The
+step vocabulary is the G4P extractor: it finds any well-formed META LDR
+and any 0x800-byte border table, and the output hash picks the G4G
+image.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `gfx-t7001.bin` | 117682 | `ca558aa5202bb0d36408b13e89dea5c6dde64cdf65c1c9ee8d5f96a5e0c110e7` |
+| `gfx-t7000-border.bin` | 2048 | `233ffc1d7db27d9f16db17e23a9ce33082b5a7b72061af3da510bca3c94aff3e` |
+
+The A8 firmware loader still rejects G4G images that carry core memory,
+so ID read is the first step the A8X DT enables.
 
 The iOS 12 kernelcaches have no per-kext load addresses in their prelink
 metadata, so both steps find their data by structure: every LDR whose

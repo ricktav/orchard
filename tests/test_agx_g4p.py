@@ -11,7 +11,9 @@ from orchard.apple import agx
 
 ROOT = Path(__file__).resolve().parents[1]
 A8_BOARDS = ('n102', 'n56', 'n61', 'j96', 'j97')
+A8X_BOARDS = ('j81', 'j82')
 LDR = 'lib/firmware/apple/gfx-t7000.bin'
+A8X_LDR = 'lib/firmware/apple/gfx-t7001.bin'
 BORDER = 'lib/firmware/apple/gfx-t7000-border.bin'
 
 
@@ -170,6 +172,28 @@ class A8Recipes(unittest.TestCase):
                     self.assertEqual(source['ipsw']['restore']['build'], '16G77')
                     hashes.add((destination, output['sha256'], source['sha256'], source['ipsw']['restore']['url']))
         self.assertEqual(len(hashes), 2, 'every A8 board pins the same image')
+
+
+class A8XRecipes(unittest.TestCase):
+    def test_every_a8x_board_installs_the_g4g_firmware(self):
+        hashes = set()
+        for board in A8X_BOARDS:
+            with self.subTest(board=board):
+                document = recipe.check(json.loads((ROOT / f'devices/{board}/firmware.json').read_text()))
+                outputs = {o['destination']: o for o in document['outputs']}
+                steps = {A8X_LDR: 'agx-g4p-ldr-from-kernelcache@1', BORDER: 'agx-g4p-border-from-kernelcache@1'}
+                for destination, step in steps.items():
+                    output = outputs[destination]
+                    name = output['steps'][0]['input']
+                    self.assertEqual(output['steps'], [{'step': step, 'input': name}])
+                    source = document['inputs'][name]
+                    self.assertTrue(source['ipsw']['kernelcache'])
+                    hashes.add((destination, output['sha256']))
+        self.assertEqual(len(hashes), 2, 'every A8X board pins the same G4G image and border table')
+        self.assertEqual(dict(hashes)[A8X_LDR],
+                         'ca558aa5202bb0d36408b13e89dea5c6dde64cdf65c1c9ee8d5f96a5e0c110e7')
+        self.assertEqual(dict(hashes)[BORDER],
+                         '233ffc1d7db27d9f16db17e23a9ce33082b5a7b72061af3da510bca3c94aff3e')
 
 
 if __name__ == '__main__':
