@@ -152,6 +152,7 @@ The CLI used to do that; it isn't needed for recipes any more.
 | `agx-g5p-ldr-from-kernelcache@1` | `input` (kernelcache) | the A9 GPU firmware (a META LDR) from AGXFirmwareKextG5P; size and digest are pinned |
 | `agx-g4p-ldr-from-kernelcache@1` | `input` (kernelcache) | the A8 GPU firmware (a META LDR) from AGXFirmwareKextG4P: the LDR whose hash is the output's |
 | `agx-g4p-border-from-kernelcache@1` | `input` (kernelcache) | the A8 GPU's border colour table, 0x800 bytes of AGXG4P's data, whose hash is the output's |
+| `agx-g3-ldr-from-kernelcache@1` | `input` (kernelcache) | the A7 GPU firmware (a META LDR) from AGXFirmwareKextG3: the LDR whose hash is the output's |
 | `im4p-payload@1` | `input` | the payload of an IM4P container |
 | `aop-image@1` | `coprocessor` | one image (`AOP`, `AOP_ext`) of an AOP firmware container, the OSSerializeBinary payload of `Firmware/AOP/aopfw-*.im4p` |
 | `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address`, `hbpp_version` | Z2 touch firmware with calibration records |
@@ -295,3 +296,22 @@ The iOS 12 kernelcaches have no per-kext load addresses in their prelink
 metadata, so both steps find their data by structure: every LDR whose
 records walk cleanly; the 0x800-byte table that starts with 0x440 zero
 bytes and the word 0x02040000. The output's hash selects the one installed.
+
+## S5L8960X G3 META firmware
+
+Every A7 board's recipe (J71, J72, J73, J85, J85m, J86, J86m, J87, J87m,
+N51, N53) installs `apple/gfx-s5l8960x.bin`. This file is the META LDR
+from `com.apple.AGXFirmwareKextG3`, byte for byte, and step
+`agx-g3-ldr-from-kernelcache@1` finds it by structure, as the A8's step
+does. The recipes read the J85 kernelcache of iOS 12.5.8 (16H88) and pin
+its LDR:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `gfx-s5l8960x.bin` | 117782 | `44816730098c99124190c8e4933ddbac6b1b50eb86555e886da567a24dc0eb88` |
+
+The J71, J85 and N51 kernelcaches of 16H88 hold the same LDR. J72's own
+image, 16H81, holds another build
+(`9c9f33af3ce06f5b7ff80b07e150edc8169f69102b525a2bdf4fbf6ef9e2fac0`).
+No driver loads this file yet. powervr only probes the A7's GPU
+([bring-up/gpu/a7-g3.md](bring-up/gpu/a7-g3.md)).

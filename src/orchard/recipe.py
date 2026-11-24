@@ -63,6 +63,10 @@ def _agx_g4p_border(step, data, expected):
     return agx.extract_g4p_border(data, expected)
 
 
+def _agx_g3(step, data, expected):
+    return agx.extract_g3_ldr(data, expected)
+
+
 def _im4p_payload(step, data, expected):
     return im4p_payload(data)
 
@@ -143,6 +147,8 @@ STEPS = {
     # A8 GPU firmware (AGXFirmwareKextG4P's META LDR) and its border colour table (AGXG4P).
     'agx-g4p-ldr-from-kernelcache@1': (_agx_g4p, {}),
     'agx-g4p-border-from-kernelcache@1': (_agx_g4p_border, {}),
+    # A7 GPU firmware (AGXFirmwareKextG3's META LDR).
+    'agx-g3-ldr-from-kernelcache@1': (_agx_g3, {}),
     'im4p-payload@1': (_im4p_payload, {}),
     # One image of an AOP firmware container (IPSW Firmware/AOP/aopfw-*.im4p payload).
     'aop-image@1': (_aop_image, {'coprocessor': str}),
