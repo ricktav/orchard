@@ -15,22 +15,23 @@ apple/gfx-t7001.bin.
 Assisted-by: LLM
 Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
 ---
- drivers/gpu/drm/imagination/pvr_apple.c | 8 ++++++--
+ drivers/gpu/drm/imagination/pvr_apple_s8003.c | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)
 
-diff --git a/drivers/gpu/drm/imagination/pvr_apple.c b/drivers/gpu/drm/imagination/pvr_apple.c
-index a8jobs..t7001rev 100644
---- a/drivers/gpu/drm/imagination/pvr_apple.c
-+++ b/drivers/gpu/drm/imagination/pvr_apple.c
-@@ -3144,6 +3144,7 @@ static int pvr_apple_s8003_prepare_job(struct pvr_apple *apple, struct pvr_job *
+diff --git a/drivers/gpu/drm/imagination/pvr_apple_s8003.c b/drivers/gpu/drm/imagination/pvr_apple_s8003.c
+index t7000rev..t7001rev 100644
+--- a/drivers/gpu/drm/imagination/pvr_apple_s8003.c
++++ b/drivers/gpu/drm/imagination/pvr_apple_s8003.c
+@@ -3310,7 +3310,8 @@ static int pvr_apple_s8003_prepare_job(struct pvr_apple *apple, struct pvr_job *job)
+ 	* firmware's; "P4"/"P5" are the live iOS objects dumped on that device.
+ 	*/
  
  /* The core this driver boots: CORE_REVISION major 3, minor 10 (readChipInfo 0x8479d14) */
  #define T7000_CORE_REVISION		0x00030a00
 +#define T7001_CORE_REVISION		0x00070500	/* GXA6850 / G4G */
  
  /* The power manager's registers, from its base (ApplePMGR) */
- #define T7000_PMGR_PLL5			0x5004	/* the GPU's PLL: bit 30 locked */
-@@ -1007,8 +1008,9 @@ static int pvr_apple_t7000_read_gpu_id(struct pvr_apple *apple, struct pvr_gpu_id *gpu_id)
+@@ -4078,8 +4079,9 @@ static int pvr_apple_t7000_read_gpu_id(struct pvr_apple *apple, struct pvr_gpu_id *gpu_id)
  		t7000_stuck(apple, "Fender stuck after the ID read");
  		return err;
  	}
