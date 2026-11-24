@@ -1,0 +1,218 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 16:52:21 +0100
+Subject: [PATCH] drm/imagination: apple: Probe the A7 (S5L8960X) GPU
+
+The A7's G6430 (Apple's G3) runs a META LDR firmware like the A8 and A9,
+but the A7's core revision, PLL lock bit, bus bridge settings and
+firmware layout are not known yet. Match "apple,s5l8960x-gpu" with a chip
+that stops the probe with -ENODEV before any of that, so the node, its
+power domain and the firmware's file name are in place for the work that
+follows.
+
+By default the probe touches no GPU register. powervr.apple_a7_read_id=1
+wakes Fender into state 1 with an empty boot stream, as the A8 driver does
+before its ID read, logs CORE_REVISION and CORE_ID and puts Fender back
+to state 0: the first measurement on hardware, which may hang the SoC.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/imagination/Kconfig           |   5 +-
+ drivers/gpu/drm/imagination/Makefile          |   1 +
+ drivers/gpu/drm/imagination/pvr_apple.h       |   1 +
+ .../gpu/drm/imagination/pvr_apple_s5l8960x.c  | 110 ++++++++++++++++++
+ drivers/gpu/drm/imagination/pvr_drv.c         |  10 ++
+ 5 files changed, 125 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/gpu/drm/imagination/pvr_apple_s5l8960x.c
+
+diff --git a/drivers/gpu/drm/imagination/Kconfig b/drivers/gpu/drm/imagination/Kconfig
+index 45e1bbcd9..d1f8e3bbc 100644
+--- a/drivers/gpu/drm/imagination/Kconfig
++++ b/drivers/gpu/drm/imagination/Kconfig
+@@ -20,7 +20,7 @@ config DRM_POWERVR
+ 	  If "M" is selected, the module will be called powervr.
+ 
+ config DRM_POWERVR_APPLE
+-	bool "Apple A8 (T7000), A9 (S8003) and A10 (T8010) GPU support"
++	bool "Apple A7 (S5L8960X), A8 (T7000), A9 (S8003) and A10 (T8010) GPU support"
+ 	depends on DRM_POWERVR
+ 	depends on APPLE_RTKIT && (ARCH_APPLE || COMPILE_TEST)
+ 	depends on DRM_POWERVR=m || APPLE_RTKIT=y
+@@ -28,7 +28,8 @@ config DRM_POWERVR_APPLE
+ 	  Support the Rogue-based GPU of the Apple A10 (T8010), which runs
+ 	  Apple's GFX firmware on an RTKit coprocessor instead of
+ 	  Imagination's firmware, and of the Apple A9 (S8003) and A8
+-	  (T7000), whose GFX firmware runs on the GPU's own processor.
++	  (T7000), whose GFX firmware runs on the GPU's own processor. The A7
++	  (S5L8960X) is only probed: its firmware is not booted yet.
+ 
+ 	  If in doubt, say "N".
+ 
+diff --git a/drivers/gpu/drm/imagination/Makefile b/drivers/gpu/drm/imagination/Makefile
+index 2e250a4cc..baba64474 100644
+--- a/drivers/gpu/drm/imagination/Makefile
++++ b/drivers/gpu/drm/imagination/Makefile
+@@ -34,6 +34,7 @@ powervr-$(CONFIG_DRM_POWERVR_APPLE) += \
+ 	pvr_apple.o \
+ 	pvr_apple_layout.o \
+ 	pvr_apple_queue.o \
++	pvr_apple_s5l8960x.o \
+ 	pvr_apple_s8003.o \
+ 	pvr_apple_t8010.o
+ 
+diff --git a/drivers/gpu/drm/imagination/pvr_apple.h b/drivers/gpu/drm/imagination/pvr_apple.h
+index 8bf106e04..c15f51c55 100644
+--- a/drivers/gpu/drm/imagination/pvr_apple.h
++++ b/drivers/gpu/drm/imagination/pvr_apple.h
+@@ -26,6 +26,7 @@ struct pvr_stream_cmd_defs;
+ struct pvr_vm_context;
+ 
+ extern const struct pvr_power_sequence_ops pvr_power_sequence_ops_apple;
++extern const struct pvr_apple_chip pvr_apple_chip_s5l8960x;
+ extern const struct pvr_apple_chip pvr_apple_chip_s8003;
+ extern const struct pvr_apple_chip pvr_apple_chip_t7000;
+ extern const struct pvr_apple_chip pvr_apple_chip_t8010;
+diff --git a/drivers/gpu/drm/imagination/pvr_apple_s5l8960x.c b/drivers/gpu/drm/imagination/pvr_apple_s5l8960x.c
+new file mode 100644
+index 000000000..0c4539fde
+--- /dev/null
++++ b/drivers/gpu/drm/imagination/pvr_apple_s5l8960x.c
+@@ -0,0 +1,110 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple A7 (S5L8960X): the GPU's first step, a probe that stops before the
++ * firmware.
++ *
++ * The A7's GPU is a G6430, Apple's G3 (HAL "G3_B0" in Apple's
++ * AppleEmbeddedGPUDrivers-133.6, iOS 12.5.8). Apple's kernel runs a META LDR
++ * firmware on it (com.apple.AGXFirmwareKextG3), as for the A8's G4P and the
++ * A9's G5P. Apple's device trees put the Rogue core and Fender at the A8's
++ * and A9's addresses and gate its power with power state 0x7c, which is
++ * ps_gfx.
++ *
++ * What is not known yet, so not done here: the A7's CORE_REVISION, its PLL
++ * lock bit (an A8 access with the PLL unlocked hung the SoC), the bus bridge
++ * settings iBoot fills in at boot (the restore image's ADT holds only
++ * zeros), and the firmware's memory layout and objects. So the probe stops
++ * with -ENODEV. By default it touches no GPU register: the power domain goes
++ * on when the device attaches and off when the probe fails. With
++ * powervr.apple_a7_read_id=1 it wakes Fender into state 1 with an empty boot
++ * stream, as the A8 driver does before its ID read, reads CORE_REVISION and
++ * CORE_ID, logs them and puts Fender back to state 0. That read is a
++ * hardware experiment: it may hang the SoC.
++ */
++
++#include "pvr_apple.h"
++#include "pvr_apple_chip.h"
++#include "pvr_device.h"
++#include "pvr_rogue_cr_defs.h"
++
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++/* Fender, as the A8 and A9 use it (pvr_apple_s8003.c); assumed the same on the A7 */
++#define A7_FENDER_CTRL_BOOT		0x40000000
++#define A7_FENDER_STREAM		0x10000
++#define A7_FENDER_STREAM_END		0xffff0000
++#define A7_FENDER_POLL_US		100000
++
++static bool pvr_apple_a7_read_id;
++module_param_named(apple_a7_read_id, pvr_apple_a7_read_id, bool, 0444);
++MODULE_PARM_DESC(apple_a7_read_id,
++		 "A7 GPU: wake Fender and read CORE_REVISION and CORE_ID at probe (experimental, may hang the SoC)");
++
++static int a7_fender_state(struct pvr_apple *apple, u32 state)
++{
++	u32 val;
++	int err;
++
++	writel(FENDER_POWER_REQUEST | state, apple->fender + FENDER_POWER_STATE);
++	err = readl_poll_timeout(apple->fender + FENDER_POWER_STATE, val,
++				 !(val & FENDER_POWER_REQUEST), 5, A7_FENDER_POLL_US);
++	if (err)
++		dev_err(apple_dev(apple), "A7: Fender stayed busy going to state %u (%#x)\n",
++			state, val);
++	return err;
++}
++
++static void a7_read_id(struct pvr_apple *apple)
++{
++	struct device *dev = apple_dev(apple);
++	struct resource *res;
++	void __iomem *rgx;
++	u32 state, rev, id;
++
++	res = platform_get_resource_byname(to_platform_device(dev), IORESOURCE_MEM, "rgx");
++	if (!res)
++		return;
++	state = readl(apple->fender + FENDER_POWER_STATE);
++	dev_info(dev, "A7: Fender power state %#x before the wake\n", state);
++	if (state & FENDER_POWER_STATE_MASK & ~FENDER_POWER_REQUEST) {
++		dev_err(dev, "A7: the GPU core is on already: not touched\n");
++		return;
++	}
++	/* Not requested: powervr maps the core itself once a chip boots */
++	rgx = ioremap_np(res->start, resource_size(res));
++	if (!rgx)
++		return;
++
++	writel(A7_FENDER_STREAM_END, apple->fender + A7_FENDER_STREAM);
++	writel(A7_FENDER_CTRL_BOOT, apple->fender + FENDER_CTRL);
++	if (!a7_fender_state(apple, 1)) {
++		usleep_range(10, 20);
++		rev = readl(rgx + ROGUE_CR_CORE_REVISION);
++		id = readl(rgx + ROGUE_CR_CORE_ID);
++		dev_info(dev, "A7: CORE_REVISION %#010x CORE_ID %#010x (Fender %#x)\n", rev, id,
++			 readl(apple->fender + FENDER_POWER_STATE));
++	}
++	a7_fender_state(apple, 0);
++	iounmap(rgx);
++}
++
++static int pvr_apple_s5l8960x_init(struct pvr_apple *apple)
++{
++	if (pvr_apple_a7_read_id)
++		a7_read_id(apple);
++	dev_info(apple_dev(apple),
++		 "A7 (G3) GPU: firmware boot is not implemented yet; not bound\n");
++	return -ENODEV;
++}
++
++/*
++ * The A7 (S5L8960X). Its firmware, apple/gfx-s5l8960x.bin, is Apple's META
++ * LDR from AGXFirmwareKextG3, byte for byte; nothing loads it yet.
++ */
++const struct pvr_apple_chip pvr_apple_chip_s5l8960x = {
++	.fw_name = "apple/gfx-s5l8960x.bin",
++	.init = pvr_apple_s5l8960x_init,
++};
+diff --git a/drivers/gpu/drm/imagination/pvr_drv.c b/drivers/gpu/drm/imagination/pvr_drv.c
+index c5a37622e..75640c933 100644
+--- a/drivers/gpu/drm/imagination/pvr_drv.c
++++ b/drivers/gpu/drm/imagination/pvr_drv.c
+@@ -1565,6 +1565,12 @@ static const struct pvr_device_data pvr_device_data_apple_t7000 = {
+ 	.apple_fw = true,
+ 	.apple_chip = &pvr_apple_chip_t7000,
+ };
++
++static const struct pvr_device_data pvr_device_data_apple_s5l8960x = {
++	.pwr_ops = &pvr_power_sequence_ops_apple,
++	.apple_fw = true,
++	.apple_chip = &pvr_apple_chip_s5l8960x,
++};
+ #endif
+ 
+ static const struct of_device_id dt_match[] = {
+@@ -1581,6 +1587,10 @@ static const struct of_device_id dt_match[] = {
+ 		.compatible = "apple,t7000-gpu",
+ 		.data = &pvr_device_data_apple_t7000,
+ 	},
++	{
++		.compatible = "apple,s5l8960x-gpu",
++		.data = &pvr_device_data_apple_s5l8960x,
++	},
+ #endif
+ 	{
+ 		.compatible = "thead,th1520-gpu",

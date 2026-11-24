@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 16:51:34 +0100
+Subject: [PATCH] dt-bindings: gpu: apple,s8003-gpu: Add the A7 (S5L8960X) GPU
+
+The A7's GPU, a G6430 (Apple's G3, HAL G3_B0 in Apple's kernel), is a
+Rogue core behind the same Fender block as the A8's and A9's, and Apple's
+kernel runs a META LDR firmware on it (AGXFirmwareKextG3). Apple's device
+trees (iOS 12.5.8, J71, J85, N51) give it the A8's and A9's two register
+ranges and five interrupts, the fifth the firmware's (the second of the
+ADT's meta-sw-interrupt tuples, AIC 88), and power gate 0x7c, which is
+ps_gfx. Allow "apple,s5l8960x-gpu" with the A9's shape: the core, Fender
+and that power domain.
+
+Assisted-by: LLM
+---
+ .../bindings/gpu/apple,s8003-gpu.yaml         | 33 ++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/gpu/apple,s8003-gpu.yaml b/Documentation/devicetree/bindings/gpu/apple,s8003-gpu.yaml
+index 6521f0821..18396ab24 100644
+--- a/Documentation/devicetree/bindings/gpu/apple,s8003-gpu.yaml
++++ b/Documentation/devicetree/bindings/gpu/apple,s8003-gpu.yaml
+@@ -4,7 +4,7 @@
+ $id: http://devicetree.org/schemas/gpu/apple,s8003-gpu.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple S8000/S8003 (A9) and T7000 (A8) GPU
++title: Apple S8000/S8003 (A9), T7000 (A8) and S5L8960X (A7) GPU
+ 
+ maintainers:
+   - Berkay Kösebay <brkosebay@users.noreply.github.com>
+@@ -21,10 +21,17 @@ description: |
+   enables, and the two bus bridges in front of the GPU, so the node names
+   those registers instead of a power domain.
+ 
++  The A7's GPU (G6430, Apple's G3, revision B0 in Apple's
++  AppleEmbeddedGPUDrivers HAL) sits at the same addresses behind the same
++  Fender block, and Apple's kernel runs a META LDR firmware on it too
++  (AGXFirmwareKextG3). Its node has the A9's shape: the Rogue core, Fender
++  and the power manager's GFX power domain.
++
+ properties:
+   compatible:
+     oneOf:
+       - enum:
++          - apple,s5l8960x-gpu
+           - apple,s8003-gpu
+           - apple,t7000-gpu
+       - items:
+@@ -148,3 +155,27 @@ examples:
+             firmware-name = "apple/gfx-t7000.bin";
+         };
+     };
++
++  - |
++    #include <dt-bindings/interrupt-controller/apple-aic.h>
++    #include <dt-bindings/interrupt-controller/irq.h>
++
++    soc {
++        #address-cells = <2>;
++        #size-cells = <2>;
++
++        gpu@201000000 {
++            compatible = "apple,s5l8960x-gpu";
++            reg = <0x2 0x01000000 0x0 0x100000>,
++                  <0x2 0x01e00000 0x0 0x100000>;
++            reg-names = "rgx", "fender";
++            power-domains = <&ps_gfx>;
++            interrupt-parent = <&aic>;
++            interrupts = <AIC_IRQ 84 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 85 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 86 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 87 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 88 IRQ_TYPE_LEVEL_HIGH>;
++            firmware-name = "apple/gfx-s5l8960x.bin";
++        };
++    };

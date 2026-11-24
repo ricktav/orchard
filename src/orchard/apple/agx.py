@@ -19,6 +19,10 @@ their prelink metadata, so both are found by their structure: every LDR whose
 records walk cleanly, and the one 0x800-byte table that opens with 0x440 zero
 bytes and then the word 0x02040000. The recipe's output hash picks the image,
 as for BlueTool's patchrams.
+
+A7 (G3): AGXFirmwareKextG3 holds a META LDR of the same kind ("METAFW_G3",
+HAL G3_B0), found the same way: the iOS 12.5.8 kernelcaches of the A7
+boards hold exactly one LDR whose records walk cleanly.
 """
 import hashlib
 import re
@@ -112,8 +116,8 @@ def _pick(candidates, expected, what):
     raise ValueError(f'Pinned {what} not found in the kernelcache')
 
 
-def extract_g4p_ldr(blob: bytes, expected) -> bytes:
-    """The A8 GPU firmware (AGXFirmwareKextG4P's META LDR), byte for byte."""
+def _ldrs(blob: bytes, expected, what) -> bytes:
+    """The META LDR in BLOB that the recipe pins, found by structure."""
     magic, candidates = struct.pack('<I', LDR_MAGIC), []
     at = blob.find(magic)
     while at >= 0:
@@ -122,7 +126,17 @@ def extract_g4p_ldr(blob: bytes, expected) -> bytes:
         except ValueError:
             pass
         at = blob.find(magic, at + 4)
-    return _pick(candidates, expected, 'G4P firmware')
+    return _pick(candidates, expected, what)
+
+
+def extract_g4p_ldr(blob: bytes, expected) -> bytes:
+    """The A8 GPU firmware (AGXFirmwareKextG4P's META LDR), byte for byte."""
+    return _ldrs(blob, expected, 'G4P firmware')
+
+
+def extract_g3_ldr(blob: bytes, expected) -> bytes:
+    """The A7 GPU firmware (AGXFirmwareKextG3's META LDR), byte for byte."""
+    return _ldrs(blob, expected, 'G3 firmware')
 
 
 def extract_g4p_border(blob: bytes, expected) -> bytes:
