@@ -124,6 +124,11 @@ class DiskDiscovery(unittest.TestCase):
         with FakeDevice(disks=[f'nvme0n{n}' for n in range(1, 8)]):
             self.assertEqual(direct.find_disk(None), '/dev/nvme0n1')
 
+    def test_the_disk_is_the_first_ans1_namespace(self):
+        # An iPad Air 2 lists ten ANS1 namespaces; only the first is the storage.
+        with FakeDevice(disks=[f'asp0n{n}' for n in range(1, 11)]):
+            self.assertEqual(direct.find_disk(None), '/dev/asp0n1')
+
     def test_two_internal_disks_stop_the_install(self):
         with FakeDevice(disks=['nvme0n1', 'applesftl0']), self.assertRaisesRegex(D.InstallError, 'More than one'):
             direct.find_disk(None)
@@ -385,13 +390,12 @@ class Launcher(unittest.TestCase):
 
 
 class BoardData(unittest.TestCase):
-    def test_p105_starts_through_the_launcher_and_warns_about_its_storage(self):
+    def test_p105_starts_through_the_launcher_with_reclamation(self):
         from orchard import devices, hardware
         adapter = devices.load('p105')
         self.assertEqual(adapter.LAUNCHER_CHAIN, 'recovery-autogo')
         self.assertEqual(adapter.boot_inputs(), [])
-        caveats = '\n'.join(service.caveats(adapter))
-        self.assertIn('freed space is not reused yet', caveats)
+        self.assertFalse(any('freed space' in line for line in service.caveats(adapter)))
         with mock.patch.dict('os.environ', {'ORCHARD_LAUNCHER': str(Path(tempfile.gettempdir()) / 'absent-launcher')}):
             self.assertIn('it starts through orchard-launcher, which is not installed', hardware.install_blockers('p105'))
         with tempfile.NamedTemporaryFile() as binary:

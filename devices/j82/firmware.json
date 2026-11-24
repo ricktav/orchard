@@ -168,6 +168,14 @@
         "rootfs": "usr/sbin/BlueTool"
       },
       "device": "/usr/sbin/BlueTool"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
     }
   },
   "outputs": [
@@ -401,6 +409,37 @@
         {
           "step": "bluetool-hcd@1",
           "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t7000-smartio.bin",
+      "sha256": "5fc96ee702d88b9a8f6a2526f566dd266c6c0d463b10490ba288db8e77434bd3",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@2",
+          "input": "kernelcache",
+          "kext": "com.apple.driver.AppleT7000SmartIO"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/gfx-t7001.bin",
+      "sha256": "ca558aa5202bb0d36408b13e89dea5c6dde64cdf65c1c9ee8d5f96a5e0c110e7",
+      "steps": [
+        {
+          "step": "agx-g4p-ldr-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/gfx-t7000-border.bin",
+      "sha256": "233ffc1d7db27d9f16db17e23a9ce33082b5a7b72061af3da510bca3c94aff3e",
+      "steps": [
+        {
+          "step": "agx-g4p-border-from-kernelcache@1",
+          "input": "kernelcache"
         }
       ]
     }

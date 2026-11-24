@@ -25,9 +25,7 @@ ones reuse it.
 
 ## Supported hardware
 
-Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
-
-The iPhone 6 (`iPhone7,2`, N61AP) has experimental tethered support. See the [bring-up record](docs/n61-bringup.md) for its tested features and remaining work.
+Does my device work? See [the table](docs/compatibility.md#does-my-device-work).
 
 Every board, chip and feature state: [device compatibility](docs/compatibility.md).
 
@@ -61,7 +59,10 @@ system.
 default. To use Wi-Fi instead, pass an SSH address, for example
 `orchard shell --host 192.168.0.19 --user tablet` or
 `orchard exec --host 192.168.0.19 --user tablet -- uname -a`. The installed
-system must allow this computer's Orchard SSH key. For a RAM payload, use
+system must allow this computer's Orchard SSH key: the installer offers that as
+its last question, and `orchard ssh-access` adds it later to a system installed
+without it, by signing in once on the device's USB serial console with the
+user's password. For a RAM payload, use
 `--host 192.168.0.19 --ram` instead; it connects as root with the RAM key.
 The payload must have SSH and Wi-Fi configured.
 
@@ -116,6 +117,7 @@ build entry (`name = "..."`, `[release] build = "tools/build.py"`). There
 - [Recovery tools](boot/initramfs/recovery/README.md)
 - [Quiet boot patches](boot/quiet/README.md)
 - [J71b compatibility audit and validation limits](docs/j71b-compatibility-audit.md)
+- [iPhone 6 (N61) bring-up record](docs/n61-bringup.md)
 - [GitHub builds](docs/ci.md)
 - [Tooling design](docs/tooling.md)
 - [Platforms, kernel trees, builds and boot](docs/platforms-and-builds.md)

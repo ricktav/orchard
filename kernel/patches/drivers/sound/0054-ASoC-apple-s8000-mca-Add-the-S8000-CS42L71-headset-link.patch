@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] ASoC: apple: s8000-mca: Add the S8000 CS42L71 headset link
+
+Add the link the iPhone 6s and 6s Plus headset codec needs, from the
+ADT's /arm-io/mca0/audio-codec iisConfig (iOS 15.8.8): consumer I2S,
+four 16-bit slots, slot masks 0x0f/0x0f, a 12 MHz MCLK output, and
+SmartIO endpoint 0x28 with a 0x180-byte FIFO and a 0xc0 trigger.
+
+iOS runs MCA0 as a clock consumer of the CS42L71 main port (XSP) on
+pad 0. The codec's ASP on pad 2 is shared with the CS35L21 loudspeaker
+and must stay off under Linux (MCA2 provides those clocks). This link
+is not enabled yet: the codec driver is probe-only. No attenuation.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ sound/soc/apple/s8000-mca.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/sound/soc/apple/s8000-mca.c b/sound/soc/apple/s8000-mca.c
+index 00270d00d..cs42l71mca 100644
+--- a/sound/soc/apple/s8000-mca.c
++++ b/sound/soc/apple/s8000-mca.c
+@@ -1578,6 +1578,39 @@ static const struct s8000_mca_hw t8011_mca_hw = {
+ 	.sio_fifo = 0xcc,
+ 	.sio_trigger = 0xac,
+ };
++
++/*
++ * N66/N71 (iPhone 6s / 6s Plus) MCA0 to the CS42L71 headset codec, from
++ * the ADT's /arm-io/mca0/audio-codec iisConfig (iOS 15.8.8):
++ *
++ *   10 13 00 00 04 00 01 00  00 1b b7 00 00 00 01 00
++ *   30 00 01 00 0f 00 00 00  0f 00 00 00 04 04 10 10
++ *
++ * Consumer, I2S, 4 slots of 16 bits, slot masks 0x0f/0x0f, a 12 MHz MCLK
++ * output. XSP on pad 0; do not enable this link until the codec probe
++ * is proven. Never clock pad 2 from the codec (CS35L21 / MCA2). The
++ * SmartIO shim is endpoint 0x28 (FIFO 0x180, trigger 0xc0).
++ */
++static const struct s8000_mca_hw s8000_cs42l71_mca_hw = {
++	.version = 4,
++	.regs = &mca_v4_regs,
++	.dai_format = SND_SOC_DAIFMT_I2S,
++	.channels = 2,
++	.slots = 4,
++	.tx_slots = 0x3,
++	.tx_cfg = MCA_TX_CFG_I2S,
++	.rx_cfg = MCA_RX_CFG_I2S,
++	.rx_slots = 0x3,
++	.formats = SNDRV_PCM_FMTBIT_S16_LE,
++	.frame_flags = MCA_FRAME_DUTY | MCA_FRAME_FMT,
++	.mclk_ctl = 0x58,
++	.mclk_rate = 12000000,
++	.sio_xfer16 = 0x21,
++	.sio_xfer32 = 0x22,
++	.sio_timeout = 0,
++	.sio_fifo = 0x180,
++	.sio_trigger = 0xc0,
++};
+ 
+ static const struct of_device_id s8000_mca_of_match[] = {
+ 	{ .compatible = "apple,s5l8960x-mca", .data = &s5l8960x_mca_hw },
+@@ -1588,6 +1621,7 @@ static const struct of_device_id s8000_mca_of_match[] = {
+ 	{ .compatible = "apple,s5l8960x-mca-tdm", .data = &s5l8960x_tdm_mca_hw },
+ 	{ .compatible = "apple,s8000-mca", .data = &s8000_mca_hw },
++	{ .compatible = "apple,s8000-mca-cs42l71", .data = &s8000_cs42l71_mca_hw },
+ 	{ .compatible = "apple,s8000-mca-tdm", .data = &s8000_tdm_mca_hw },
+ 	{ .compatible = "apple,t7001-mca", .data = &t7001_mca_hw },
+ 	{ .compatible = "apple,t8011-mca", .data = &t8011_mca_hw },
+ 	{ .compatible = "apple,t8010-mca", .data = &t8010_mca_hw },
+-- 
+2.50.1

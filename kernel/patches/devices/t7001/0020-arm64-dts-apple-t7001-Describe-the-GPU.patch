@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] arm64: dts: apple: t7001: Describe the GPU
+
+The A8X's GPU: the Rogue core's registers and Fender, the power
+manager's and the two GPU bus bridges' registers (the driver powers the
+GPU itself, in Apple's order), and its five interrupts, the fifth the
+firmware's: AIC 134-138, matching the A8. The bridge window is 0xc1000,
+from the two A8-style tables sitting further apart than on T7000. The
+firmware is the G4G META LDR, named separately from the A8's G4P image.
+
+Disabled until a board enables it.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/apple/t7001.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001.dtsi b/arch/arm64/boot/dts/apple/t7001.dtsi
+index 8716534b6..t7001gpu 100644
+--- a/arch/arm64/boot/dts/apple/t7001.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001.dtsi
+@@ -129,6 +129,23 @@
+ 		nonposted-mmio;
+ 		ranges;
+ 
++		gpu: gpu@201000000 {
++			compatible = "apple,t7001-gpu", "apple,t7000-gpu";
++			reg = <0x2 0x01000000 0x0 0x100000>,
++			      <0x2 0x01e00000 0x0 0x100000>,
++			      <0x2 0x0e000000 0x0 0x40000>,
++			      <0x2 0x01f00000 0x0 0xc1000>;
++			reg-names = "rgx", "fender", "pmgr", "bridges";
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 134 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 135 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 136 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 137 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 138 IRQ_TYPE_LEVEL_HIGH>;
++			firmware-name = "apple/gfx-t7001.bin";
++			status = "disabled";
++		};
++
+ 		cpufreq: performance-controller@202220000 {
+ 			compatible = "apple,t7000-cluster-cpufreq", "apple,s5l8960x-cluster-cpufreq";
+ 			reg = <0x2 0x02220000 0 0x1000>;
+-- 
+2.50.1

@@ -1,0 +1,370 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] ASoC: codecs: Add Cirrus Logic CS42L71 driver
+
+The CS42L71 on the iPhone 6s / 6s Plus uses AppleCSSPIv2Audio's framed
+SPIv2 protocol (24-bit little-endian addresses), not the CS42L81's
+6C/6D page framing. Do not boot a 6C/6D driver on this chip: it would
+write the wrong map, including the ASP clock-provider bit that shares
+pad 2 with the working CS35L21 loudspeaker.
+
+This first driver only brings the SPI port up (A1 50 / poll / A1 40)
+and reads 0x000001..03 and 0x000005. It does not soft-reset, does not
+run enableAudioHW, does not register a DAI, and does not touch ASP.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ sound/soc/codecs/Kconfig   |   10 +
+ sound/soc/codecs/Makefile  |    2 +
+ sound/soc/codecs/cs42l71.c |  290 +
+ 3 files changed, 302 insertions(+)
+ create mode 100644 sound/soc/codecs/cs42l71.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 5d21695a7..aaaaaaaaa 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -86,6 +86,7 @@ config SND_SOC_ALL_CODECS
+ 	imply SND_SOC_CS42L52
+ 	imply SND_SOC_CS42L56
++	imply SND_SOC_CS42L71
+ 	imply SND_SOC_CS42L73
+ 	imply SND_SOC_CS42L81
+ 	imply SND_SOC_CS42L84
+ 	imply SND_SOC_CS4234
+@@ -1027,6 +1028,15 @@ config SND_SOC_CS42L56
+ 	tristate "Cirrus Logic CS42L56 CODEC"
+ 	depends on I2C && INPUT
+ 
++config SND_SOC_CS42L71
++	tristate "Cirrus Logic CS42L71 CODEC"
++	depends on SPI_MASTER
++	help
++	  Enable support for the Cirrus Logic CS42L71, an Apple-specific
++	  headset codec on the iPhone 6s and 6s Plus. The control port is
++	  Apple's SPIv2 framing, not the CS42L81 6C/6D map. This driver
++	  only brings the port up and reads the ID; it does not enable audio.
++
+ config SND_SOC_CS42L73
+ 	tristate "Cirrus Logic CS42L73 CODEC"
+ 	depends on I2C
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index a23e9144d..bbbbbbbbb 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -94,6 +94,7 @@ snd-soc-cs42l51-i2c-y := cs42l51-i2c.o
+ snd-soc-cs42l52-y := cs42l52.o
+ snd-soc-cs42l56-y := cs42l56.o
++snd-soc-cs42l71-y := cs42l71.o
+ snd-soc-cs42l73-y := cs42l73.o
+ snd-soc-cs42l81-y := cs42l81.o
+ snd-soc-cs42l83-i2c-y := cs42l83-i2c.o
+ snd-soc-cs42l84-y := cs42l84.o
+@@ -538,6 +539,7 @@ obj-$(CONFIG_SND_SOC_CS42L51_I2C)	+= snd-soc-cs42l51-i2c.o
+ obj-$(CONFIG_SND_SOC_CS42L52)	+= snd-soc-cs42l52.o
+ obj-$(CONFIG_SND_SOC_CS42L56)	+= snd-soc-cs42l56.o
++obj-$(CONFIG_SND_SOC_CS42L71)	+= snd-soc-cs42l71.o
+ obj-$(CONFIG_SND_SOC_CS42L73)	+= snd-soc-cs42l73.o
+ obj-$(CONFIG_SND_SOC_CS42L81)	+= snd-soc-cs42l81.o
+ obj-$(CONFIG_SND_SOC_CS42L83)	+= snd-soc-cs42l83-i2c.o
+ obj-$(CONFIG_SND_SOC_CS42L84)	+= snd-soc-cs42l84.o
+diff --git a/sound/soc/codecs/cs42l71.c b/sound/soc/codecs/cs42l71.c
+new file mode 100644
+index 000000000..111111111
+--- /dev/null
++++ b/sound/soc/codecs/cs42l71.c
+@@ -0,0 +1,290 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Cirrus Logic CS42L71 codec driver (probe-only)
++ *
++ * Copyright (C) 2026 ricktav
++ *
++ * The CS42L71 is an Apple-specific Cirrus Logic headset codec on the
++ * iPhone 6s and 6s Plus (N66/N71). There is no public datasheet. The
++ * control port is AppleCSSPIv2Audio's framed "SPIv2" protocol (24-bit
++ * little-endian addresses), reconstructed from iOS 15.8.8 (19H422)
++ * AppleCS42L71Audio / AppleEmbeddedAudio. It is not the CS42L81's
++ * 6C/6D 5-byte page framing: that map must not be written on this chip.
++ *
++ * This driver only brings the SPI port up and reads 0x000001..03 and
++ * 0x000005. It does not soft-reset, does not run enableAudioHW, and
++ * does not register a DAI. Do not enable audio from here.
++ *
++ * The codec's ASP (pad 2) is shared with the CS35L21 loudspeaker that
++ * already works on Linux (MCA2 as clock provider). Never set 0x02000b
++ * bit 7, and keep the ASP powered off. Headset data is the main port
++ * (XSP) on pad 0 / MCA0, a later step. Do not drive D2255 PMU GPIO 12
++ * (the digital LDO pulldown): Linux has no D2255 GPIO driver.
++ */
++
++#include <linux/delay.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/string.h>
++
++#define CS42L71_OP_PORT		0xa1
++#define CS42L71_OP_POLL		0x90
++#define CS42L71_OP_ADDR		0x80
++#define CS42L71_OP_COUNT	0x81
++#define CS42L71_OP_RD8		0xc6
++
++#define CS42L71_PORT_BRINGUP	0x50
++#define CS42L71_PORT_RUN	0x40
++#define CS42L71_PORT_ABORT	0x01
++
++#define CS42L71_ST_SPI_READY	0x90	/* bits 7 and 4: write / port ready */
++#define CS42L71_ST_READ_READY	0x50	/* bits 6 and 4: read data ready */
++
++#define CS42L71_BRINGUP_POLLS	49
++#define CS42L71_READ_TRIES	32
++
++#define CS42L71_DEVID		0x000001	/* expected 0x42 */
++#define CS42L71_DEVID_MID	0x000002
++#define CS42L71_DEVID_LO	0x000003
++#define CS42L71_REVID		0x000005
++
++struct cs42l71 {
++	struct device *dev;
++	struct spi_device *spi;
++};
++
++/*
++ * One full-duplex transfer. hold_cs on the last (only) transfer of a
++ * message leaves chip select asserted so the next spi_sync continues
++ * the same SPIv2 sequence. The caller must spi_bus_lock around a
++ * sequence, and the last transfer of the sequence must not hold CS.
++ */
++static int cs42l71_xfer(struct cs42l71 *cs, const u8 *tx, u8 *rx,
++			unsigned int len, bool hold_cs)
++{
++	struct spi_transfer t = {
++		.tx_buf = tx,
++		.rx_buf = rx,
++		.len = len,
++		.cs_change = hold_cs,
++	};
++
++	return spi_sync_transfer(cs->spi, &t, 1);
++}
++
++static int cs42l71_port_cmd(struct cs42l71 *cs, u8 val, bool hold_cs)
++{
++	u8 tx[2] = { CS42L71_OP_PORT, val };
++
++	return cs42l71_xfer(cs, tx, NULL, 2, hold_cs);
++}
++
++static int cs42l71_release_cs(struct cs42l71 *cs)
++{
++	u8 tx[2] = { CS42L71_OP_POLL, 0 };
++
++	return cs42l71_xfer(cs, tx, NULL, 2, false);
++}
++
++/*
++ * Port bring-up after a cold or soft reset, CS held for the whole
++ * sequence: A1 50, 1 ms, poll 90 00 until status has 0x90 (at most
++ * 49 x 1 ms), then A1 40. A timeout sends A1 01.
++ */
++static int cs42l71_port_bringup(struct cs42l71 *cs)
++{
++	u8 poll_tx[2] = { CS42L71_OP_POLL, 0 };
++	u8 poll_rx[2];
++	int i, ret;
++
++	spi_bus_lock(cs->spi->controller);
++
++	ret = cs42l71_port_cmd(cs, CS42L71_PORT_BRINGUP, true);
++	if (ret)
++		goto abort;
++	fsleep(1000);
++
++	for (i = 0; i < CS42L71_BRINGUP_POLLS; i++) {
++		memset(poll_rx, 0, sizeof(poll_rx));
++		ret = cs42l71_xfer(cs, poll_tx, poll_rx, 2, true);
++		if (ret)
++			goto abort;
++		if ((poll_rx[1] & CS42L71_ST_SPI_READY) == CS42L71_ST_SPI_READY) {
++			ret = cs42l71_port_cmd(cs, CS42L71_PORT_RUN, false);
++			spi_bus_unlock(cs->spi->controller);
++			return ret;
++		}
++		fsleep(1000);
++	}
++
++	dev_err(cs->dev,
++		"SPIv2 port not ready (status %#x, want bits 7+4)\n",
++		poll_rx[1]);
++	cs42l71_port_cmd(cs, CS42L71_PORT_ABORT, false);
++	spi_bus_unlock(cs->spi->controller);
++	return -ETIMEDOUT;
++
++abort:
++	cs42l71_port_cmd(cs, CS42L71_PORT_ABORT, false);
++	spi_bus_unlock(cs->spi->controller);
++	return ret;
++}
++
++static void cs42l71_fill_header(u8 *hdr, u32 addr, u16 count)
++{
++	hdr[0] = CS42L71_OP_ADDR;
++	hdr[1] = addr;
++	hdr[2] = addr >> 8;
++	hdr[3] = addr >> 16;
++	hdr[4] = CS42L71_OP_COUNT;
++	hdr[5] = count;
++	hdr[6] = count >> 8;
++}
++
++/*
++ * 8-bit read: header 80 aaaaaa 81 nnnn, then C6 00 (00 00)xn C6 00
++ * until the last rx byte has 0x50 (up to 32 tries, header sent once),
++ * then n+2 dummy clocks. The data is the first n rx bytes of that
++ * last transfer.
++ */
++static int cs42l71_read8(struct cs42l71 *cs, u32 addr, u8 *data, unsigned int n)
++{
++	u8 hdr[7];
++	u8 *payload_tx, *payload_rx, *dummy_tx, *dummy_rx;
++	unsigned int payload_len = 2 * n + 4;
++	unsigned int dummy_len = n + 2;
++	unsigned int i;
++	int ret, try;
++	bool held = false;
++
++	if (!n || n > 16)
++		return -EINVAL;
++
++	payload_tx = kzalloc(payload_len + payload_len + dummy_len + dummy_len,
++			     GFP_KERNEL);
++	if (!payload_tx)
++		return -ENOMEM;
++	payload_rx = payload_tx + payload_len;
++	dummy_tx = payload_rx + payload_len;
++	dummy_rx = dummy_tx + dummy_len;
++
++	payload_tx[0] = CS42L71_OP_RD8;
++	payload_tx[payload_len - 2] = CS42L71_OP_RD8;
++
++	cs42l71_fill_header(hdr, addr, n);
++
++	spi_bus_lock(cs->spi->controller);
++	held = true;
++
++	ret = cs42l71_xfer(cs, hdr, NULL, sizeof(hdr), true);
++	if (ret)
++		goto out;
++
++	ret = -ETIMEDOUT;
++	for (try = 0; try < CS42L71_READ_TRIES; try++) {
++		memset(payload_rx, 0, payload_len);
++		ret = cs42l71_xfer(cs, payload_tx, payload_rx, payload_len, true);
++		if (ret)
++			goto out;
++		if ((payload_rx[payload_len - 1] & CS42L71_ST_READ_READY) ==
++		    CS42L71_ST_READ_READY) {
++			ret = 0;
++			break;
++		}
++		ret = -ETIMEDOUT;
++	}
++	if (ret) {
++		dev_err(cs->dev, "SPIv2 read %#06x never ready\n", addr);
++		goto out;
++	}
++
++	ret = cs42l71_xfer(cs, dummy_tx, dummy_rx, dummy_len, false);
++	held = false;
++	if (!ret) {
++		for (i = 0; i < n; i++)
++			data[i] = dummy_rx[i];
++	}
++
++out:
++	if (held)
++		cs42l71_release_cs(cs);
++	spi_bus_unlock(cs->spi->controller);
++	kfree(payload_tx);
++	return ret;
++}
++
++static int cs42l71_read_id(struct cs42l71 *cs, u8 id[4])
++{
++	int ret;
++
++	ret = cs42l71_read8(cs, CS42L71_DEVID, &id[0], 1);
++	if (ret)
++		return ret;
++	ret = cs42l71_read8(cs, CS42L71_DEVID_MID, &id[1], 1);
++	if (ret)
++		return ret;
++	ret = cs42l71_read8(cs, CS42L71_DEVID_LO, &id[2], 1);
++	if (ret)
++		return ret;
++	return cs42l71_read8(cs, CS42L71_REVID, &id[3], 1);
++}
++
++static int cs42l71_probe(struct spi_device *spi)
++{
++	struct cs42l71 *cs;
++	u8 id[4] = { };
++	int ret;
++
++	cs = devm_kzalloc(&spi->dev, sizeof(*cs), GFP_KERNEL);
++	if (!cs)
++		return -ENOMEM;
++
++	cs->dev = &spi->dev;
++	cs->spi = spi;
++	spi->bits_per_word = 8;
++	ret = spi_setup(spi);
++	if (ret)
++		return ret;
++
++	spi_set_drvdata(spi, cs);
++
++	ret = cs42l71_port_bringup(cs);
++	if (ret)
++		return ret;
++
++	ret = cs42l71_read_id(cs, id);
++	if (ret)
++		return ret;
++
++	if (id[0] != 0x42) {
++		dev_err(cs->dev,
++			"unexpected device ID %02x %02x %02x (rev %02x)\n",
++			id[0], id[1], id[2], id[3]);
++		return -ENODEV;
++	}
++
++	dev_info(cs->dev, "CS42L71 ID %02x %02x %02x rev %02x (probe only)\n",
++		 id[0], id[1], id[2], id[3]);
++	return 0;
++}
++
++static const struct of_device_id cs42l71_of_match[] = {
++	{ .compatible = "cirrus,cs42l71" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cs42l71_of_match);
++
++static struct spi_driver cs42l71_driver = {
++	.driver = {
++		.name = "cs42l71",
++		.of_match_table = cs42l71_of_match,
++	},
++	.probe = cs42l71_probe,
++};
++module_spi_driver(cs42l71_driver);
++
++MODULE_DESCRIPTION("ASoC CS42L71 driver (SPIv2 probe only)");
++MODULE_AUTHOR("ricktav <82380971+ricktav@users.noreply.github.com>");
++MODULE_LICENSE("GPL");
+-- 
+2.50.1

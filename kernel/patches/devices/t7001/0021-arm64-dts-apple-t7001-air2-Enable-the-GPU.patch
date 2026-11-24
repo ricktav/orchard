@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] arm64: dts: apple: t7001-air2: Enable the GPU
+
+Turn the A8X GPU on for the iPad Air 2 (J81, J82). DWI is already held
+on so the core ID can be read. Firmware boot of the G4G image is a
+later step.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/apple/t7001-air2.dtsi | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-air2.dtsi b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+index 9ee8b64f2..air2gpu 100644
+--- a/arch/arm64/boot/dts/apple/t7001-air2.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+@@ -296,7 +296,11 @@
+ 			remote-endpoint = <&tristar_charger_usb>;
+ 		};
+ 	};
+ };
+ 
++&gpu {
++	status = "okay";
++};
++
+ /*
+  * The BCM4350C2's Bluetooth on UART3, from the ADT uart3/bluetooth node:
+-- 
+2.50.1

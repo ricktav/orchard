@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] arm64: dts: apple: s800x-6s: Add the CS42L71 headset codec
+
+The IPSW device trees of the iPhone 6s and 6s Plus (N66, N66m, N71,
+N71m, iOS 15.8.8) put the CS42L71 on SPI1, chip select AP GPIO 16.
+This node is for a probe-only driver: SPIv2 port bring-up and an ID
+read. There is no sound card and MCA0 is left disabled, so the
+working CS35L21 loudspeaker on pad 2 / MCA2 is not disturbed.
+
+Do not put clocks or a DAI on this node until the control port is
+proven. IRQ 139 (jack detect) and the D2255 LDO pulldown are not
+described yet. SPI is 1 MHz, mode 0.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/apple/s800x-6s.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/s800x-6s.dtsi b/arch/arm64/boot/dts/apple/s800x-6s.dtsi
+index 7dba5a1e2..6s-cs42l71 100644
+--- a/arch/arm64/boot/dts/apple/s800x-6s.dtsi
++++ b/arch/arm64/boot/dts/apple/s800x-6s.dtsi
+@@ -224,6 +224,24 @@
+ 		#sound-dai-cells = <0>;
+ 	};
+ };
++
++/*
++ * Headset codec of the iPhone 6s and 6s Plus: CS42L71 on SPI1 (ADT
++ * spi1/audio-codec, CS GPIO 16). Probe-only: no sound card, no MCA0,
++ * no MCLK. Pad 2 / ASP stays with the CS35L21 on MCA2.
++ */
++&spi1 {
++	/* ADT function-spi_cs0: AP GPIO 16, active low */
++	cs-gpios = <&pinctrl_ap 16 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	cs42l71: audio-codec@0 {
++		compatible = "cirrus,cs42l71";
++		reg = <0>;
++		/* ADT bit period 83 ns (~12 MHz); 1 MHz until the port is proven */
++		spi-max-frequency = <1000000>;
++	};
++};
+ 
+ &framebuffer0 {
+ 	power-domains = <&ps_disp0 &ps_mipi_dsi>;
+-- 
+2.50.1

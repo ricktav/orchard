@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:00:00 +0100
+Subject: [PATCH] dt-bindings: sound: apple,s8000-mca: Add the S8000 CS42L71
+ link
+
+The iPhone 6s and 6s Plus headset codec sits on MCA0: consumer I2S, four
+16-bit slots, SmartIO FIFO 0x180 / trigger 0xc0, from the ADT's
+mca0/audio-codec. apple,s8000-mca is the iPad 5's CS42L81 link (two
+slots, a larger FIFO). Add apple,s8000-mca-cs42l71 for this one.
+
+Assisted-by: LLM
+Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
+---
+ Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+index 935a8523d..c71cs42l71 100644
+--- a/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
++++ b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+@@ -20,7 +20,8 @@ description: |
+   speaker link (TDM), apple,t8010-mca-i2s the playback-only stereo I2S link
+   to the headphone codec. apple,s8000-mca-tdm is an A9 MCA driving its own
+   clocks from an AP NCO channel, the playback-only speaker link (TDM) of the
+-  iPhone 6s Plus. The MCAs are the same block; the compatible names
++  iPhone 6s and 6s Plus. apple,s8000-mca-cs42l71 is their headset I2S
++  link to the CS42L71 XSP on pad 0, not the ASP on pad 2. The MCAs are
+   the link setup iOS programs into it. The T7001 (A8X) MCA is the older
+   "mca-version 1" register layout with the same fields: apple,t7001-mca is
+   the playback-only speaker link (TDM) of the iPad Air 2, clocked from an AP
+@@ -66,6 +67,7 @@ properties:
+     enum:
+       - apple,s5l8960x-mca
+       - apple,s5l8960x-mca-tdm
+       - apple,s8000-mca
++      - apple,s8000-mca-cs42l71
+       - apple,s8000-mca-tdm
+       - apple,t7001-mca
+-- 
+2.50.1
