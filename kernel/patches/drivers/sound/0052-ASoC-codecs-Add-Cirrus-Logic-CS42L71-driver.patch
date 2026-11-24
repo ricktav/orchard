@@ -28,13 +28,13 @@ index 5d21695a7..aaaaaaaaa 100644
 --- a/sound/soc/codecs/Kconfig
 +++ b/sound/soc/codecs/Kconfig
 @@ -86,6 +86,7 @@ config SND_SOC_ALL_CODECS
-	imply SND_SOC_CS42L52
-	imply SND_SOC_CS42L56
+ 	imply SND_SOC_CS42L52
+ 	imply SND_SOC_CS42L56
 +	imply SND_SOC_CS42L71
-	imply SND_SOC_CS42L73
-	imply SND_SOC_CS42L81
-	imply SND_SOC_CS42L84
-	imply SND_SOC_CS4234
+ 	imply SND_SOC_CS42L73
+ 	imply SND_SOC_CS42L81
+ 	imply SND_SOC_CS42L84
+ 	imply SND_SOC_CS4234
 @@ -1032,6 +1033,16 @@ config SND_SOC_CS42L56
  	tristate "Cirrus Logic CS42L56 CODEC"
  	depends on I2C
