@@ -3,25 +3,24 @@ From: ricktav <82380971+ricktav@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 10:00:00 +0100
 Subject: [PATCH] ASoC: codecs: Add Cirrus Logic CS42L71 driver
 
-The CS42L71 is an Apple-specific Cirrus Logic headset codec on the
-iPhone 6s and 6s Plus. There is no public datasheet; the control
-protocol matches the CS42L81 (SPI 6C/6D paged framing, device ID
-42 xx 1x). Power-up and the headphone / earpiece routes follow
-AppleCS42L81Audio's enableAudio, which the CS42L71 kext's
-enableAudioHW shares through the Cirrus codec class.
+The CS42L71 on the iPhone 6s / 6s Plus uses AppleCSSPIv2Audio's framed
+SPIv2 protocol (24-bit little-endian addresses), not the CS42L81's
+6C/6D page framing. Do not boot a 6C/6D driver on this chip: it would
+write the wrong map, including the ASP clock-provider bit that shares
+pad 2 with the working CS35L21 loudspeaker.
 
-The codec is the BCLK/LRCK provider. Analog mic bias and MikeyBus
-jack detect are not driven yet: userspace selects headphones or
-the earpiece with the "Output Select" control. Speakers stay on
-the CS35L19 path (MCA2).
+This first driver only brings the SPI port up (A1 50 / poll / A1 40)
+and reads 0x000001..03 and 0x000005. It does not soft-reset, does not
+run enableAudioHW, does not register a DAI, and does not touch ASP.
 
 Assisted-by: LLM
 Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
 ---
- sound/soc/codecs/Kconfig   |   11 +
+ sound/soc/codecs/Kconfig   |   10 +
  sound/soc/codecs/Makefile  |    2 +
- sound/soc/codecs/cs42l71.c |  685 +
- 3 files changed, 698 insertions(+)
+ sound/soc/codecs/cs42l71.c |  290 +
+ 3 files changed, 302 insertions(+)
+ create mode 100644 sound/soc/codecs/cs42l71.c
 
 diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
 index 5d21695a7..aaaaaaaaa 100644
@@ -35,19 +34,18 @@ index 5d21695a7..aaaaaaaaa 100644
  	imply SND_SOC_CS42L81
  	imply SND_SOC_CS42L84
  	imply SND_SOC_CS4234
-@@ -1032,6 +1033,16 @@ config SND_SOC_CS42L56
+@@ -1032,6 +1033,15 @@ config SND_SOC_CS42L56
  	tristate "Cirrus Logic CS42L56 CODEC"
  	depends on I2C
  
 +config SND_SOC_CS42L71
 +	tristate "Cirrus Logic CS42L71 CODEC"
 +	depends on SPI_MASTER
-+	select REGMAP
 +	help
 +	  Enable support for the Cirrus Logic CS42L71, an Apple-specific
-+	  headset codec controlled over SPI. It has a headphone driver and
-+	  an earpiece driver, and is used in the iPhone 6s and 6s Plus
-+	  together with the S8000 MCA.
++	  headset codec on the iPhone 6s and 6s Plus. The control port is
++	  Apple's SPIv2 framing, not the CS42L81 6C/6D map. This driver
++	  only brings the port up and reads the ID; it does not enable audio.
 +
  config SND_SOC_CS42L73
  	tristate "Cirrus Logic CS42L73 CODEC"
@@ -77,666 +75,277 @@ new file mode 100644
 index 000000000..111111111
 --- /dev/null
 +++ b/sound/soc/codecs/cs42l71.c
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,290 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR MIT
 +/*
-+ * Cirrus Logic CS42L71 codec driver
++ * Cirrus Logic CS42L71 codec driver (probe-only)
 + *
 + * Copyright (C) 2026 ricktav
 + *
-+ * The CS42L71 is an Apple-specific Cirrus Logic headset codec used on the
++ * The CS42L71 is an Apple-specific Cirrus Logic headset codec on the
 + * iPhone 6s and 6s Plus (N66/N71). There is no public datasheet. The
-+ * control port is the same 5-byte paged SPI framing as the CS42L81
-+ * (AppleCSSPIv2Audio): write 6C page reg 00 val, read 6D page reg 00 xx
-+ * with the value in the 5th byte. Device ID 42 xx 1x at 0x01..0x03.
++ * control port is AppleCSSPIv2Audio's framed "SPIv2" protocol (24-bit
++ * little-endian addresses), reconstructed from iOS 15.8.8 (19H422)
++ * AppleCS42L71Audio / AppleEmbeddedAudio. It is not the CS42L81's
++ * 6C/6D 5-byte page framing: that map must not be written on this chip.
 + *
-+ * Power-up (enableAudioHW) and the headphone / earpiece routes follow
-+ * AppleCS42L81Audio's enableAudio, which the CS42L71 kext's enableAudioHW
-+ * shares through the Cirrus codec class. Speaker amplifiers are off the
-+ * codec (CS35L19 on MCA2). Analog mic bias and MikeyBus jack detect are
-+ * not driven yet.
++ * This driver only brings the SPI port up and reads 0x000001..03 and
++ * 0x000005. It does not soft-reset, does not run enableAudioHW, and
++ * does not register a DAI. Do not enable audio from here.
++ *
++ * The codec's ASP (pad 2) is shared with the CS35L21 loudspeaker that
++ * already works on Linux (MCA2 as clock provider). Never set 0x02000b
++ * bit 7, and keep the ASP powered off. Headset data is the main port
++ * (XSP) on pad 0 / MCA0, a later step. Do not drive D2255 PMU GPIO 12
++ * (the digital LDO pulldown): Linux has no D2255 GPIO driver.
 + */
 +
-+#include <linux/bits.h>
-+#include <linux/clk.h>
 +#include <linux/delay.h>
 +#include <linux/module.h>
-+#include <linux/regmap.h>
++#include <linux/of.h>
++#include <linux/slab.h>
 +#include <linux/spi/spi.h>
-+#include <sound/pcm.h>
-+#include <sound/pcm_params.h>
-+#include <sound/soc.h>
-+#include <sound/tlv.h>
++#include <linux/string.h>
 +
-+#define CS42L71_SPI_WRITE	0x6c
-+#define CS42L71_SPI_READ	0x6d
-+#define CS42L71_SPI_LEN		5
++#define CS42L71_OP_PORT		0xa1
++#define CS42L71_OP_POLL		0x90
++#define CS42L71_OP_ADDR		0x80
++#define CS42L71_OP_COUNT	0x81
++#define CS42L71_OP_RD8		0xc6
 +
-+#define CS42L71_DEVID_AB	0x0001	/* reads 0x42 */
-+#define CS42L71_DEVID_CD	0x0002
-+#define CS42L71_DEVID_E		0x0003	/* reads 0x1x */
-+#define CS42L71_REVID		0x0005
-+#define CS42L71_PWR_CTL1	0x0006
-+#define CS42L71_PWR_CTL1_PDN		BIT(0)
-+#define CS42L71_PWR_CTL1_BIT2		BIT(2)
-+#define CS42L71_PWR_CTL1_FREEZE		BIT(6)
-+#define CS42L71_PWR_CTL1_REVA0		BIT(7)
-+#define CS42L71_PWR_CTL2	0x0007
-+#define CS42L71_PATH_PWR	0x000e
-+#define CS42L71_PATH_PWR_DAC_PDN	BIT(7)
-+#define CS42L71_PATH_PWR_ADC_PDN	BIT(6)
-+#define CS42L71_PATH_PWR_COMMON_PDN	BIT(5)
-+#define CS42L71_CLK_CTL		0x000f
-+#define CS42L71_CLK_CTL_PROVIDER	0x80
-+#define CS42L71_ASP_PWR		0x0011
-+#define CS42L71_ASP_PWR_RX_PDN		BIT(7)
-+#define CS42L71_ASP_PWR_TX_PDN		BIT(6)
-+#define CS42L71_ASP_CLK		0x0012
-+#define CS42L71_ASP_CLK_PROVIDER	BIT(7)
-+#define CS42L71_ASP_TX_SLOT(n)	(0x0014 + (n))
-+#define CS42L71_ASP_TX_SLOT_EMPTY	BIT(7)
-+#define CS42L71_ASP_TX_EN(n)	(0x001e + (n))
-+#define CS42L71_ASP_RX_SLOT(n)	(0x0022 + (n))
-+#define CS42L71_ASP_SLOTS	10
-+#define CS42L71_ASP_TX_SRC(n)	(0x0115 + (n))
-+#define CS42L71_ADC_SRC(n)	(0x011f + (n))
-+#define CS42L71_INT_STATUS2	0x002f
-+#define CS42L71_INT_STATUS2_PDN_DONE	BIT(7)
-+#define CS42L71_SRC_RATE_A	0x0123
-+#define CS42L71_ASP_PAIR_RATE(p)	(0x0129 + (p))
-+#define CS42L71_ASP_TX_RATE	0x012e
-+#define CS42L71_ASP_RX_RATE	0x012f
-+#define CS42L71_ASP_CTL		0x0131
-+#define CS42L71_OUT_CTL		0x0201
-+#define CS42L71_ADC_ROUTE	0x0203
-+#define CS42L71_ADC_ROUTE_NONE		0xc4
-+#define CS42L71_ADC_CTL_A	0x0204
-+#define CS42L71_ADC_RATE_A	0x0205
-+#define CS42L71_ADC_CTL_B	0x020f
-+#define CS42L71_ADC_CTL_C	0x0210
-+#define CS42L71_ADC_RATE_B	0x0211
-+#define CS42L71_HPCP_CTL	0x0219
-+#define CS42L71_DRV_PDN		0x0220
-+#define CS42L71_DRV_PDN_HP		BIT(5)
-+#define CS42L71_DRV_PDN_LINE		BIT(3)
-+#define CS42L71_DRV_CTL1	0x0221
-+#define CS42L71_DAC_RATE	0x0222
-+#define CS42L71_DRV_CTL2	0x0223
-+#define CS42L71_DRV_CTL3	0x0224
-+#define CS42L71_HP_VOL_A	0x0227
-+#define CS42L71_HP_VOL_B	0x0228
-+#define CS42L71_LINE_VOL_A	0x0229
-+#define CS42L71_LINE_VOL_B	0x022a
-+#define CS42L71_DRV_CTL4	0x0230
-+#define CS42L71_UNLOCK		0x9901
-+#define CS42L71_UNLOCK_KEY		0xa5
-+#define CS42L71_TRIM1		0xc81f
-+#define CS42L71_TRIM2		0xc85f
-+#define CS42L71_TRIM3		0xc96f
++#define CS42L71_PORT_BRINGUP	0x50
++#define CS42L71_PORT_RUN	0x40
++#define CS42L71_PORT_ABORT	0x01
 +
-+#define CS42L71_HP_MUTE		0x40
-+#define CS42L71_HP_VOL_0DB	100
-+#define CS42L71_HP_VOL_MAX	124
-+#define CS42L71_HP_VOL_DEFAULT	40	/* -30 dB */
-+#define CS42L71_PDN_POLL_US	10000
-+#define CS42L71_PDN_TIMEOUT_US	1000000
++#define CS42L71_ST_SPI_READY	0x90	/* bits 7 and 4: write / port ready */
++#define CS42L71_ST_READ_READY	0x50	/* bits 6 and 4: read data ready */
++
++#define CS42L71_BRINGUP_POLLS	49
++#define CS42L71_READ_TRIES	32
++
++#define CS42L71_DEVID		0x000001	/* expected 0x42 */
++#define CS42L71_DEVID_MID	0x000002
++#define CS42L71_DEVID_LO	0x000003
++#define CS42L71_REVID		0x000005
 +
 +struct cs42l71 {
 +	struct device *dev;
 +	struct spi_device *spi;
-+	struct regmap *regmap;
-+	struct clk *mclk;
-+	u8 *xfer_buf;
-+	unsigned int rate_code;
-+	unsigned int slot_bytes;
-+	bool core_on;
-+	unsigned int hp_vol;
-+	unsigned int hp_switch;
-+	unsigned int out_sel;	/* 0 headphones, 1 earpiece */
 +};
 +
-+static int cs42l71_bus_write(void *context, unsigned int reg, unsigned int val)
++/*
++ * One full-duplex transfer. hold_cs on the last (only) transfer of a
++ * message leaves chip select asserted so the next spi_sync continues
++ * the same SPIv2 sequence. The caller must spi_bus_lock around a
++ * sequence, and the last transfer of the sequence must not hold CS.
++ */
++static int cs42l71_xfer(struct cs42l71 *cs, const u8 *tx, u8 *rx,
++			unsigned int len, bool hold_cs)
 +{
-+	struct cs42l71 *cs = context;
-+	u8 *tx = cs->xfer_buf;
-+
-+	tx[0] = CS42L71_SPI_WRITE;
-+	tx[1] = reg >> 8;
-+	tx[2] = reg & 0x7f;
-+	tx[3] = 0;
-+	tx[4] = val;
-+	return spi_write(cs->spi, tx, CS42L71_SPI_LEN);
-+}
-+
-+static int cs42l71_bus_read(void *context, unsigned int reg, unsigned int *val)
-+{
-+	struct cs42l71 *cs = context;
-+	u8 *tx = cs->xfer_buf, *rx = cs->xfer_buf + CS42L71_SPI_LEN;
 +	struct spi_transfer t = {
 +		.tx_buf = tx,
 +		.rx_buf = rx,
-+		.len = CS42L71_SPI_LEN,
++		.len = len,
++		.cs_change = hold_cs,
 +	};
-+	int ret;
 +
-+	tx[0] = CS42L71_SPI_READ;
-+	tx[1] = reg >> 8;
-+	tx[2] = reg & 0x7f;
-+	tx[3] = 0;
-+	tx[4] = 0;
-+	memset(rx, 0, CS42L71_SPI_LEN);
-+	ret = spi_sync_transfer(cs->spi, &t, 1);
++	return spi_sync_transfer(cs->spi, &t, 1);
++}
++
++static int cs42l71_port_cmd(struct cs42l71 *cs, u8 val, bool hold_cs)
++{
++	u8 tx[2] = { CS42L71_OP_PORT, val };
++
++	return cs42l71_xfer(cs, tx, NULL, 2, hold_cs);
++}
++
++static int cs42l71_release_cs(struct cs42l71 *cs)
++{
++	u8 tx[2] = { CS42L71_OP_POLL, 0 };
++
++	return cs42l71_xfer(cs, tx, NULL, 2, false);
++}
++
++/*
++ * Port bring-up after a cold or soft reset, CS held for the whole
++ * sequence: A1 50, 1 ms, poll 90 00 until status has 0x90 (at most
++ * 49 x 1 ms), then A1 40. A timeout sends A1 01.
++ */
++static int cs42l71_port_bringup(struct cs42l71 *cs)
++{
++	u8 poll_tx[2] = { CS42L71_OP_POLL, 0 };
++	u8 poll_rx[2];
++	int i, ret;
++
++	spi_bus_lock(cs->spi->controller);
++
++	ret = cs42l71_port_cmd(cs, CS42L71_PORT_BRINGUP, true);
 +	if (ret)
-+		return ret;
-+	*val = rx[4];
-+	return 0;
-+}
++		goto abort;
++	fsleep(1000);
 +
-+static const struct regmap_bus cs42l71_bus = {
-+	.reg_write = cs42l71_bus_write,
-+	.reg_read = cs42l71_bus_read,
-+};
-+
-+static bool cs42l71_valid_reg(struct device *dev, unsigned int reg)
-+{
-+	return !(reg & 0x80);
-+}
-+
-+static const struct regmap_config cs42l71_regmap = {
-+	.reg_bits = 16,
-+	.val_bits = 8,
-+	.max_register = 0xffff,
-+	.readable_reg = cs42l71_valid_reg,
-+	.writeable_reg = cs42l71_valid_reg,
-+	.cache_type = REGCACHE_NONE,
-+};
-+
-+static int cs42l71_rate_code(unsigned int rate)
-+{
-+	switch (rate) {
-+	case 8000:
-+		return 0x1;
-+	case 11025:
-+		return 0x2;
-+	case 12000:
-+		return 0x4;
-+	case 16000:
-+		return 0x5;
-+	case 22050:
-+		return 0x6;
-+	case 24000:
-+		return 0x8;
-+	case 32000:
-+		return 0x9;
-+	case 44100:
-+		return 0xa;
-+	case 48000:
-+		return 0xc;
-+	default:
-+		return -EINVAL;
-+	}
-+}
-+
-+static void cs42l71_set_rate(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+	unsigned int c = cs->rate_code;
-+
-+	regmap_update_bits(map, CS42L71_CLK_CTL, 0x0f, c);
-+	regmap_write(map, CS42L71_ASP_TX_RATE, c | c << 4);
-+	regmap_write(map, CS42L71_ASP_RX_RATE, c | c << 4);
-+	regmap_write(map, CS42L71_SRC_RATE_A, c);
-+	regmap_write(map, CS42L71_DAC_RATE, c);
-+	regmap_update_bits(map, CS42L71_ADC_RATE_A, 0x0f, c);
-+	regmap_update_bits(map, CS42L71_ADC_RATE_B, 0x0f, c);
-+}
-+
-+static void cs42l71_set_asp(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+	unsigned int c = cs->rate_code, b = cs->slot_bytes, n;
-+	u32 lanes = GENMASK(2 * b - 1, 0);
-+
-+	regmap_write(map, CS42L71_ASP_CLK, CS42L71_ASP_CLK_PROVIDER | c);
-+	for (n = 0; n < CS42L71_ASP_SLOTS; n++)
-+		regmap_write(map, CS42L71_ASP_RX_SLOT(n),
-+			     ((n * b) | ((b - 1) << 5)) & 0xff);
-+	for (n = 0; n < CS42L71_ASP_SLOTS / 2; n++)
-+		regmap_write(map, CS42L71_ASP_PAIR_RATE(n), c | c << 4);
-+	/* Capture: ADC A/B in slots 0/1, as the shared Cirrus ASP map. */
-+	for (n = 0; n < CS42L71_ASP_SLOTS; n++) {
-+		regmap_write(map, CS42L71_ASP_TX_SLOT(n),
-+			     n * b | (n < 2 ? 0 : CS42L71_ASP_TX_SLOT_EMPTY));
-+		if (n < 2)
-+			regmap_write(map, CS42L71_ASP_TX_SRC(n),
-+				     n ? 0x1c : 0x18);
-+	}
-+	for (n = 0; n < 4; n++)
-+		regmap_write(map, CS42L71_ASP_TX_EN(n),
-+			     (lanes >> (24 - 8 * n)) & 0xff);
-+}
-+
-+static void cs42l71_apply_hp_volume(struct cs42l71 *cs)
-+{
-+	unsigned int v = CS42L71_HP_MUTE;
-+
-+	if (cs->hp_switch)
-+		v = cs->hp_vol;
-+	if (cs->out_sel == 0) {
-+		regmap_write(cs->regmap, CS42L71_HP_VOL_A, v);
-+		regmap_write(cs->regmap, CS42L71_HP_VOL_B, v);
-+		regmap_write(cs->regmap, CS42L71_LINE_VOL_A, CS42L71_HP_MUTE);
-+		regmap_write(cs->regmap, CS42L71_LINE_VOL_B, CS42L71_HP_MUTE);
-+	} else {
-+		regmap_write(cs->regmap, CS42L71_LINE_VOL_A, v);
-+		regmap_write(cs->regmap, CS42L71_LINE_VOL_B, v);
-+		regmap_write(cs->regmap, CS42L71_HP_VOL_A, CS42L71_HP_MUTE);
-+		regmap_write(cs->regmap, CS42L71_HP_VOL_B, CS42L71_HP_MUTE);
-+	}
-+}
-+
-+static int cs42l71_core_power_up(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+	unsigned int rev;
-+	int ret;
-+
-+	ret = clk_prepare_enable(cs->mclk);
-+	if (ret)
-+		return ret;
-+
-+	regmap_write(map, CS42L71_UNLOCK, CS42L71_UNLOCK_KEY);
-+	fsleep(10000);
-+	regmap_write(map, CS42L71_UNLOCK, 0x00);
-+
-+	ret = regmap_read(map, CS42L71_REVID, &rev);
-+	if (ret) {
-+		clk_disable_unprepare(cs->mclk);
-+		return ret;
-+	}
-+	if (rev == 0xa0)
-+		regmap_set_bits(map, CS42L71_PWR_CTL1, CS42L71_PWR_CTL1_REVA0);
-+
-+	regmap_clear_bits(map, CS42L71_PWR_CTL2, 0x80);
-+	regmap_update_bits(map, CS42L71_CLK_CTL, 0xcf, CS42L71_CLK_CTL_PROVIDER);
-+	regmap_clear_bits(map, CS42L71_ASP_CLK, 0xc0);
-+	regmap_clear_bits(map, CS42L71_ASP_PWR, 0x10);
-+	regmap_update_bits(map, CS42L71_PWR_CTL1,
-+			   CS42L71_PWR_CTL1_PDN | CS42L71_PWR_CTL1_BIT2,
-+			   CS42L71_PWR_CTL1_BIT2);
-+	regmap_write(map, CS42L71_OUT_CTL, 0xe0);
-+	regmap_write(map, CS42L71_HPCP_CTL, 0x00);
-+	regmap_write(map, CS42L71_TRIM1, 0xff);
-+	regmap_write(map, CS42L71_TRIM2, 0x0f);
-+	regmap_write(map, CS42L71_TRIM3, 0x0e);
-+	regmap_set_bits(map, CS42L71_DRV_CTL1, 0x20);
-+	regmap_write(map, CS42L71_DRV_CTL2, 0x08);
-+	regmap_write(map, CS42L71_DRV_CTL3, 0x09);
-+	regmap_set_bits(map, CS42L71_ADC_CTL_A, 0x04);
-+	regmap_set_bits(map, CS42L71_ADC_CTL_C, 0x04);
-+	regmap_write(map, CS42L71_DRV_CTL4, 0x0c);
-+	cs42l71_set_rate(cs);
-+	cs42l71_set_asp(cs);
-+	regmap_write(map, CS42L71_ADC_ROUTE, CS42L71_ADC_ROUTE_NONE);
-+	regmap_write(map, CS42L71_ADC_CTL_B, 0x04);
-+	regmap_set_bits(map, CS42L71_PWR_CTL1, CS42L71_PWR_CTL1_BIT2);
-+	regmap_update_bits(map, CS42L71_ASP_PWR,
-+			   CS42L71_ASP_PWR_RX_PDN | CS42L71_ASP_PWR_TX_PDN,
-+			   CS42L71_ASP_PWR_TX_PDN);
-+	regmap_set_bits(map, CS42L71_ASP_CTL, 0x01);
-+	regmap_clear_bits(map, CS42L71_PATH_PWR, CS42L71_PATH_PWR_DAC_PDN |
-+			  CS42L71_PATH_PWR_COMMON_PDN);
-+	regmap_set_bits(map, CS42L71_PATH_PWR, CS42L71_PATH_PWR_ADC_PDN);
-+	cs->core_on = true;
-+	return 0;
-+}
-+
-+static void cs42l71_capture_power_up(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+
-+	regmap_write(map, CS42L71_ADC_SRC(0), 0x18);
-+	regmap_write(map, CS42L71_ADC_SRC(1), 0x1c);
-+	regmap_clear_bits(map, CS42L71_ASP_PWR, CS42L71_ASP_PWR_TX_PDN);
-+	regmap_clear_bits(map, CS42L71_PATH_PWR, CS42L71_PATH_PWR_ADC_PDN |
-+			  CS42L71_PATH_PWR_COMMON_PDN);
-+}
-+
-+static void cs42l71_capture_power_down(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+
-+	regmap_write(map, CS42L71_ADC_ROUTE, CS42L71_ADC_ROUTE_NONE);
-+	regmap_set_bits(map, CS42L71_ASP_PWR, CS42L71_ASP_PWR_TX_PDN);
-+	regmap_set_bits(map, CS42L71_PATH_PWR, CS42L71_PATH_PWR_ADC_PDN);
-+}
-+
-+static void cs42l71_core_power_down(struct cs42l71 *cs)
-+{
-+	struct regmap *map = cs->regmap;
-+	unsigned int val;
-+
-+	cs->core_on = false;
-+	regmap_write(map, CS42L71_HP_VOL_A, CS42L71_HP_MUTE);
-+	regmap_write(map, CS42L71_HP_VOL_B, CS42L71_HP_MUTE);
-+	regmap_write(map, CS42L71_LINE_VOL_A, CS42L71_HP_MUTE);
-+	regmap_write(map, CS42L71_LINE_VOL_B, CS42L71_HP_MUTE);
-+	regmap_write(map, CS42L71_DRV_PDN, 0x28);
-+	regmap_read(map, CS42L71_INT_STATUS2, &val);
-+	regmap_set_bits(map, CS42L71_PWR_CTL1,
-+			CS42L71_PWR_CTL1_PDN | CS42L71_PWR_CTL1_BIT2);
-+	regmap_read_poll_timeout(map, CS42L71_INT_STATUS2, val,
-+				 val & CS42L71_INT_STATUS2_PDN_DONE,
-+				 CS42L71_PDN_POLL_US, CS42L71_PDN_TIMEOUT_US);
-+	regmap_set_bits(map, CS42L71_PWR_CTL1, CS42L71_PWR_CTL1_FREEZE);
-+	fsleep(10000);
-+	regmap_write(map, CS42L71_UNLOCK, CS42L71_UNLOCK_KEY);
-+	clk_disable_unprepare(cs->mclk);
-+}
-+
-+static int cs42l71_core_event(struct snd_soc_dapm_widget *w,
-+			      struct snd_kcontrol *kcontrol, int event)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(
-+		snd_soc_dapm_to_component(w->dapm));
-+
-+	switch (event) {
-+	case SND_SOC_DAPM_PRE_PMU:
-+		return cs42l71_core_power_up(cs);
-+	case SND_SOC_DAPM_POST_PMD:
-+		cs42l71_core_power_down(cs);
-+		break;
-+	}
-+	return 0;
-+}
-+
-+static int cs42l71_hp_event(struct snd_soc_dapm_widget *w,
-+			    struct snd_kcontrol *kcontrol, int event)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(
-+		snd_soc_dapm_to_component(w->dapm));
-+	struct regmap *map = cs->regmap;
-+
-+	switch (event) {
-+	case SND_SOC_DAPM_PRE_PMU:
-+		regmap_write(map, CS42L71_OUT_CTL, 0xe0);
-+		if (cs->out_sel == 0)
-+			regmap_update_bits(map, CS42L71_DRV_PDN,
-+					   CS42L71_DRV_PDN_HP | CS42L71_DRV_PDN_LINE,
-+					   CS42L71_DRV_PDN_LINE);
-+		else
-+			regmap_update_bits(map, CS42L71_DRV_PDN,
-+					   CS42L71_DRV_PDN_HP | CS42L71_DRV_PDN_LINE,
-+					   CS42L71_DRV_PDN_HP);
-+		cs42l71_apply_hp_volume(cs);
-+		msleep(60);
-+		cs42l71_apply_hp_volume(cs);
-+		break;
-+	case SND_SOC_DAPM_PRE_PMD:
-+		regmap_write(map, CS42L71_LINE_VOL_A, CS42L71_HP_MUTE);
-+		regmap_write(map, CS42L71_HP_VOL_A, CS42L71_HP_MUTE);
-+		regmap_set_bits(map, CS42L71_DRV_PDN,
-+				CS42L71_DRV_PDN_HP | CS42L71_DRV_PDN_LINE);
-+		msleep(20);
-+		break;
-+	}
-+	return 0;
-+}
-+
-+static int cs42l71_adc_event(struct snd_soc_dapm_widget *w,
-+			     struct snd_kcontrol *kcontrol, int event)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(
-+		snd_soc_dapm_to_component(w->dapm));
-+
-+	switch (event) {
-+	case SND_SOC_DAPM_PRE_PMU:
-+		cs42l71_capture_power_up(cs);
-+		break;
-+	case SND_SOC_DAPM_PRE_PMD:
-+		cs42l71_capture_power_down(cs);
-+		break;
-+	}
-+	return 0;
-+}
-+
-+static const DECLARE_TLV_DB_SCALE(cs42l71_hp_tlv, -5000, 50, 0);
-+static const char * const cs42l71_out_text[] = { "Headphones", "Earpiece" };
-+static SOC_ENUM_SINGLE_VIRT_DECL(cs42l71_out_enum, cs42l71_out_text);
-+
-+static int cs42l71_out_get(struct snd_kcontrol *kcontrol,
-+			   struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(snd_kcontrol_chip(kcontrol));
-+
-+	ucontrol->value.enumerated.item[0] = cs->out_sel;
-+	return 0;
-+}
-+
-+static int cs42l71_out_put(struct snd_kcontrol *kcontrol,
-+			   struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(component);
-+	unsigned int sel = ucontrol->value.enumerated.item[0];
-+
-+	if (sel > 1)
-+		return -EINVAL;
-+	if (cs->out_sel == sel)
-+		return 0;
-+	cs->out_sel = sel;
-+	if (cs->core_on)
-+		cs42l71_apply_hp_volume(cs);
-+	return 1;
-+}
-+
-+static int cs42l71_hp_vol_get(struct snd_kcontrol *kcontrol,
-+			      struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(snd_kcontrol_chip(kcontrol));
-+
-+	ucontrol->value.integer.value[0] = cs->hp_vol;
-+	return 0;
-+}
-+
-+static int cs42l71_hp_vol_put(struct snd_kcontrol *kcontrol,
-+			      struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(snd_kcontrol_chip(kcontrol));
-+	long v = ucontrol->value.integer.value[0];
-+
-+	if (v < 0 || v > CS42L71_HP_VOL_MAX)
-+		return -EINVAL;
-+	if (cs->hp_vol == v)
-+		return 0;
-+	cs->hp_vol = v;
-+	if (cs->core_on)
-+		cs42l71_apply_hp_volume(cs);
-+	return 1;
-+}
-+
-+static int cs42l71_hp_sw_get(struct snd_kcontrol *kcontrol,
-+			     struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(snd_kcontrol_chip(kcontrol));
-+
-+	ucontrol->value.integer.value[0] = cs->hp_switch;
-+	return 0;
-+}
-+
-+static int cs42l71_hp_sw_put(struct snd_kcontrol *kcontrol,
-+			     struct snd_ctl_elem_value *ucontrol)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(snd_kcontrol_chip(kcontrol));
-+	long v = ucontrol->value.integer.value[0];
-+
-+	if (v < 0 || v > 1)
-+		return -EINVAL;
-+	if (cs->hp_switch == v)
-+		return 0;
-+	cs->hp_switch = v;
-+	if (cs->core_on)
-+		cs42l71_apply_hp_volume(cs);
-+	return 1;
-+}
-+
-+static const struct snd_kcontrol_new cs42l71_controls[] = {
-+	SOC_SINGLE_EXT_TLV("Headphone Playback Volume", 0, 0, CS42L71_HP_VOL_MAX, 0,
-+			   cs42l71_hp_vol_get, cs42l71_hp_vol_put, cs42l71_hp_tlv),
-+	SOC_SINGLE_BOOL_EXT("Headphone Playback Switch", 0,
-+			    cs42l71_hp_sw_get, cs42l71_hp_sw_put),
-+	SOC_ENUM_EXT("Output Select", cs42l71_out_enum, cs42l71_out_get, cs42l71_out_put),
-+};
-+
-+static const struct snd_soc_dapm_widget cs42l71_widgets[] = {
-+	SND_SOC_DAPM_SUPPLY("Core", SND_SOC_NOPM, 0, 0, cs42l71_core_event,
-+			    SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-+	SND_SOC_DAPM_AIF_IN("ASPRX", "ASP Playback", 0, SND_SOC_NOPM, 0, 0),
-+	SND_SOC_DAPM_AIF_OUT_E("ASPTX", "ASP Capture", 0, SND_SOC_NOPM, 0, 0,
-+			       cs42l71_adc_event,
-+			       SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_PRE_PMD),
-+	SND_SOC_DAPM_OUT_DRV_E("HPDRV", SND_SOC_NOPM, 0, 0, NULL, 0, cs42l71_hp_event,
-+			       SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_PRE_PMD),
-+	SND_SOC_DAPM_OUTPUT("HPOUT"),
-+	SND_SOC_DAPM_OUTPUT("EAROUT"),
-+	SND_SOC_DAPM_INPUT("AMIC"),
-+};
-+
-+static const struct snd_soc_dapm_route cs42l71_routes[] = {
-+	{ "ASPRX", NULL, "Core" },
-+	{ "ASPTX", NULL, "Core" },
-+	{ "HPDRV", NULL, "ASPRX" },
-+	{ "HPOUT", NULL, "HPDRV" },
-+	{ "EAROUT", NULL, "HPDRV" },
-+	{ "ASPTX", NULL, "AMIC" },
-+};
-+
-+static int cs42l71_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
-+{
-+	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBP_CFP)
-+		return -EINVAL;
-+	return 0;
-+}
-+
-+static int cs42l71_hw_params(struct snd_pcm_substream *substream,
-+			     struct snd_pcm_hw_params *params,
-+			     struct snd_soc_dai *dai)
-+{
-+	struct cs42l71 *cs = snd_soc_component_get_drvdata(dai->component);
-+	int code = cs42l71_rate_code(params_rate(params));
-+	unsigned int width = params_physical_width(params);
-+
-+	if (code < 0)
-+		return code;
-+	if (width != 16 && width != 32)
-+		return -EINVAL;
-+	cs->rate_code = code;
-+	cs->slot_bytes = width / 8;
-+	if (cs->core_on) {
-+		cs42l71_set_rate(cs);
-+		cs42l71_set_asp(cs);
-+	}
-+	return 0;
-+}
-+
-+static const struct snd_soc_dai_ops cs42l71_dai_ops = {
-+	.set_fmt = cs42l71_set_fmt,
-+	.hw_params = cs42l71_hw_params,
-+};
-+
-+#define CS42L71_RATES	(SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 | \
-+			 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 | \
-+			 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | \
-+			 SNDRV_PCM_RATE_48000)
-+#define CS42L71_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE)
-+
-+static struct snd_soc_dai_driver cs42l71_dai = {
-+	.name = "cs42l71-asp",
-+	.playback = {
-+		.stream_name = "ASP Playback",
-+		.channels_min = 2,
-+		.channels_max = 2,
-+		.rates = CS42L71_RATES,
-+		.formats = CS42L71_FORMATS,
-+	},
-+	.capture = {
-+		.stream_name = "ASP Capture",
-+		.channels_min = 2,
-+		.channels_max = 2,
-+		.rates = CS42L71_RATES,
-+		.formats = CS42L71_FORMATS,
-+	},
-+	.ops = &cs42l71_dai_ops,
-+	.symmetric_rate = 1,
-+	.symmetric_sample_bits = 1,
-+};
-+
-+static const struct snd_soc_component_driver cs42l71_component = {
-+	.controls = cs42l71_controls,
-+	.num_controls = ARRAY_SIZE(cs42l71_controls),
-+	.dapm_widgets = cs42l71_widgets,
-+	.num_dapm_widgets = ARRAY_SIZE(cs42l71_widgets),
-+	.dapm_routes = cs42l71_routes,
-+	.num_dapm_routes = ARRAY_SIZE(cs42l71_routes),
-+	.endianness = 1,
-+};
-+
-+static int cs42l71_check_id(struct cs42l71 *cs)
-+{
-+	unsigned int id[3] = {}, i;
-+	int ret;
-+
-+	ret = clk_prepare_enable(cs->mclk);
-+	if (ret)
-+		return dev_err_probe(cs->dev, ret, "failed to enable MCLK\n");
-+	for (i = 0; i < ARRAY_SIZE(id); i++) {
-+		ret = regmap_read(cs->regmap, CS42L71_DEVID_AB + i, &id[i]);
++	for (i = 0; i < CS42L71_BRINGUP_POLLS; i++) {
++		memset(poll_rx, 0, sizeof(poll_rx));
++		ret = cs42l71_xfer(cs, poll_tx, poll_rx, 2, true);
 +		if (ret)
-+			break;
++			goto abort;
++		if ((poll_rx[1] & CS42L71_ST_SPI_READY) == CS42L71_ST_SPI_READY) {
++			ret = cs42l71_port_cmd(cs, CS42L71_PORT_RUN, false);
++			spi_bus_unlock(cs->spi->controller);
++			return ret;
++		}
++		fsleep(1000);
 +	}
-+	clk_disable_unprepare(cs->mclk);
-+	if (ret)
-+		return dev_err_probe(cs->dev, ret, "failed to read the ID\n");
-+	if (id[0] != 0x42 || (id[2] & 0xf0) != 0x10)
-+		return dev_err_probe(cs->dev, -ENODEV,
-+				     "unexpected ID %02x %02x %02x\n",
-+				     id[0], id[1], id[2]);
-+	dev_info(cs->dev, "CS42L71 ID %02x %02x %02x\n", id[0], id[1], id[2]);
-+	return 0;
++
++	dev_err(cs->dev,
++		"SPIv2 port not ready (status %#x, want bits 7+4)\n",
++		poll_rx[1]);
++	cs42l71_port_cmd(cs, CS42L71_PORT_ABORT, false);
++	spi_bus_unlock(cs->spi->controller);
++	return -ETIMEDOUT;
++
++abort:
++	cs42l71_port_cmd(cs, CS42L71_PORT_ABORT, false);
++	spi_bus_unlock(cs->spi->controller);
++	return ret;
 +}
 +
-+static int cs42l71_spi_probe(struct spi_device *spi)
++static void cs42l71_fill_header(u8 *hdr, u32 addr, u16 count)
 +{
-+	struct device *dev = &spi->dev;
-+	struct cs42l71 *cs;
++	hdr[0] = CS42L71_OP_ADDR;
++	hdr[1] = addr;
++	hdr[2] = addr >> 8;
++	hdr[3] = addr >> 16;
++	hdr[4] = CS42L71_OP_COUNT;
++	hdr[5] = count;
++	hdr[6] = count >> 8;
++}
++
++/*
++ * 8-bit read: header 80 aaaaaa 81 nnnn, then C6 00 (00 00)xn C6 00
++ * until the last rx byte has 0x50 (up to 32 tries, header sent once),
++ * then n+2 dummy clocks. The data is the first n rx bytes of that
++ * last transfer.
++ */
++static int cs42l71_read8(struct cs42l71 *cs, u32 addr, u8 *data, unsigned int n)
++{
++	u8 hdr[7];
++	u8 *payload_tx, *payload_rx, *dummy_tx, *dummy_rx;
++	unsigned int payload_len = 2 * n + 4;
++	unsigned int dummy_len = n + 2;
++	unsigned int i;
++	int ret, try;
++	bool held = false;
++
++	if (!n || n > 16)
++		return -EINVAL;
++
++	payload_tx = kzalloc(payload_len + payload_len + dummy_len + dummy_len,
++			     GFP_KERNEL);
++	if (!payload_tx)
++		return -ENOMEM;
++	payload_rx = payload_tx + payload_len;
++	dummy_tx = payload_rx + payload_len;
++	dummy_rx = dummy_tx + dummy_len;
++
++	payload_tx[0] = CS42L71_OP_RD8;
++	payload_tx[payload_len - 2] = CS42L71_OP_RD8;
++
++	cs42l71_fill_header(hdr, addr, n);
++
++	spi_bus_lock(cs->spi->controller);
++	held = true;
++
++	ret = cs42l71_xfer(cs, hdr, NULL, sizeof(hdr), true);
++	if (ret)
++		goto out;
++
++	ret = -ETIMEDOUT;
++	for (try = 0; try < CS42L71_READ_TRIES; try++) {
++		memset(payload_rx, 0, payload_len);
++		ret = cs42l71_xfer(cs, payload_tx, payload_rx, payload_len, true);
++		if (ret)
++			goto out;
++		if ((payload_rx[payload_len - 1] & CS42L71_ST_READ_READY) ==
++		    CS42L71_ST_READ_READY) {
++			ret = 0;
++			break;
++		}
++		ret = -ETIMEDOUT;
++	}
++	if (ret) {
++		dev_err(cs->dev, "SPIv2 read %#06x never ready\n", addr);
++		goto out;
++	}
++
++	ret = cs42l71_xfer(cs, dummy_tx, dummy_rx, dummy_len, false);
++	held = false;
++	if (!ret) {
++		for (i = 0; i < n; i++)
++			data[i] = dummy_rx[i];
++	}
++
++out:
++	if (held)
++		cs42l71_release_cs(cs);
++	spi_bus_unlock(cs->spi->controller);
++	kfree(payload_tx);
++	return ret;
++}
++
++static int cs42l71_read_id(struct cs42l71 *cs, u8 id[4])
++{
 +	int ret;
 +
-+	cs = devm_kzalloc(dev, sizeof(*cs), GFP_KERNEL);
++	ret = cs42l71_read8(cs, CS42L71_DEVID, &id[0], 1);
++	if (ret)
++		return ret;
++	ret = cs42l71_read8(cs, CS42L71_DEVID_MID, &id[1], 1);
++	if (ret)
++		return ret;
++	ret = cs42l71_read8(cs, CS42L71_DEVID_LO, &id[2], 1);
++	if (ret)
++		return ret;
++	return cs42l71_read8(cs, CS42L71_REVID, &id[3], 1);
++}
++
++static int cs42l71_probe(struct spi_device *spi)
++{
++	struct cs42l71 *cs;
++	u8 id[4] = { };
++	int ret;
++
++	cs = devm_kzalloc(&spi->dev, sizeof(*cs), GFP_KERNEL);
 +	if (!cs)
 +		return -ENOMEM;
-+	cs->dev = dev;
++
++	cs->dev = &spi->dev;
 +	cs->spi = spi;
-+	cs->xfer_buf = devm_kzalloc(dev, 2 * CS42L71_SPI_LEN, GFP_KERNEL);
-+	if (!cs->xfer_buf)
-+		return -ENOMEM;
-+	spi_set_drvdata(spi, cs);
-+	cs->regmap = devm_regmap_init(dev, &cs42l71_bus, cs, &cs42l71_regmap);
-+	if (IS_ERR(cs->regmap))
-+		return dev_err_probe(dev, PTR_ERR(cs->regmap),
-+				     "failed to init regmap\n");
-+	cs->mclk = devm_clk_get(dev, "mclk");
-+	if (IS_ERR(cs->mclk))
-+		return dev_err_probe(dev, PTR_ERR(cs->mclk),
-+				     "failed to get MCLK\n");
-+	cs->rate_code = 0xc;
-+	cs->slot_bytes = 2;
-+	cs->hp_vol = CS42L71_HP_VOL_DEFAULT;
-+	cs->hp_switch = 1;
-+	ret = cs42l71_check_id(cs);
++	spi->bits_per_word = 8;
++	ret = spi_setup(spi);
 +	if (ret)
 +		return ret;
-+	return devm_snd_soc_register_component(dev, &cs42l71_component,
-+					       &cs42l71_dai, 1);
++
++	spi_set_drvdata(spi, cs);
++
++	ret = cs42l71_port_bringup(cs);
++	if (ret)
++		return ret;
++
++	ret = cs42l71_read_id(cs, id);
++	if (ret)
++		return ret;
++
++	if (id[0] != 0x42) {
++		dev_err(cs->dev,
++			"unexpected device ID %02x %02x %02x (rev %02x)\n",
++			id[0], id[1], id[2], id[3]);
++		return -ENODEV;
++	}
++
++	dev_info(cs->dev, "CS42L71 ID %02x %02x %02x rev %02x (probe only)\n",
++		 id[0], id[1], id[2], id[3]);
++	return 0;
 +}
 +
 +static const struct of_device_id cs42l71_of_match[] = {
@@ -745,23 +354,17 @@ index 000000000..111111111
 +};
 +MODULE_DEVICE_TABLE(of, cs42l71_of_match);
 +
-+static const struct spi_device_id cs42l71_spi_ids[] = {
-+	{ "cs42l71" },
-+	{ }
-+};
-+MODULE_DEVICE_TABLE(spi, cs42l71_spi_ids);
-+
-+static struct spi_driver cs42l71_spi_driver = {
++static struct spi_driver cs42l71_driver = {
 +	.driver = {
 +		.name = "cs42l71",
 +		.of_match_table = cs42l71_of_match,
 +	},
-+	.probe = cs42l71_spi_probe,
-+	.id_table = cs42l71_spi_ids,
++	.probe = cs42l71_probe,
 +};
-+module_spi_driver(cs42l71_spi_driver);
++module_spi_driver(cs42l71_driver);
 +
-+MODULE_DESCRIPTION("Cirrus Logic CS42L71 codec driver");
-+MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("ASoC CS42L71 driver (SPIv2 probe only)");
++MODULE_AUTHOR("ricktav <82380971+ricktav@users.noreply.github.com>");
++MODULE_LICENSE("GPL");
 -- 
 2.50.1

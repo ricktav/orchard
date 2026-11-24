@@ -8,10 +8,10 @@ ADT's /arm-io/mca0/audio-codec iisConfig (iOS 15.8.8): consumer I2S,
 four 16-bit slots, slot masks 0x0f/0x0f, a 12 MHz MCLK output, and
 SmartIO endpoint 0x28 with a 0x180-byte FIFO and a 0xc0 trigger.
 
-iOS runs this MCA as a clock consumer of the CS42L71 codec's ASP. The
-codec driver programs that provider role. No attenuation: the codec has
-volume control. Capture is on (the node already names an RX DMA
-endpoint).
+iOS runs MCA0 as a clock consumer of the CS42L71 main port (XSP) on
+pad 0. The codec's ASP on pad 2 is shared with the CS35L21 loudspeaker
+and must stay off under Linux (MCA2 provides those clocks). This link
+is not enabled yet: the codec driver is probe-only. No attenuation.
 
 Assisted-by: LLM
 Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
@@ -35,9 +35,9 @@ index 00270d00d..cs42l71mca 100644
 + *   30 00 01 00 0f 00 00 00  0f 00 00 00 04 04 10 10
 + *
 + * Consumer, I2S, 4 slots of 16 bits, slot masks 0x0f/0x0f, a 12 MHz MCLK
-+ * output. The SmartIO shim words are the ADT's dma-channels for endpoint
-+ * 0x28 (FIFO 0x180, trigger 0xc0). PCM is stereo in slots 0/1; the extra
-+ * two slots are the ADT's frame. No attenuation: the codec has volume.
++ * output. XSP on pad 0; do not enable this link until the codec probe
++ * is proven. Never clock pad 2 from the codec (CS35L21 / MCA2). The
++ * SmartIO shim is endpoint 0x28 (FIFO 0x180, trigger 0xc0).
 + */
 +static const struct s8000_mca_hw s8000_cs42l71_mca_hw = {
 +	.version = 4,

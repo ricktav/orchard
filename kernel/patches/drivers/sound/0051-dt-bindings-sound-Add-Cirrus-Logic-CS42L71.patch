@@ -1,26 +1,27 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ricktav <82380971+ricktav@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 10:00:00 +0100
 Subject: [PATCH] dt-bindings: sound: Add Cirrus Logic CS42L71
 
 The CS42L71 is an Apple-specific Cirrus Logic headset codec on the
 iPhone 6s and 6s Plus (N66/N71). There is no public datasheet. Control
-is SPI with the same 5-byte paged protocol as the CS42L81. The codec
-provides BCLK/LRCK; MCA0 is the consumer. Speaker amplifiers sit off
-the codec.
+is SPI with Apple's SPIv2 framing (24-bit little-endian addresses),
+not the CS42L81 6C/6D map. Headset data is the main port on MCA0
+(pad 0). The codec's ASP on pad 2 is shared with the loudspeaker
+amplifier and must stay off under Linux.
 
 Assisted-by: LLM
 Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
 ---
- .../bindings/sound/cirrus,cs42l71.yaml               | 64 +++++++++++++++++++
- 1 file changed, 64 insertions(+)
+ .../bindings/sound/cirrus,cs42l71.yaml               | 53 +++++++++++++++++++
+ 1 file changed, 53 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/sound/cirrus,cs42l71.yaml b/Documentation/devicetree/bindings/sound/cirrus,cs42l71.yaml
 new file mode 100644
 index 000000000..111111111
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/sound/cirrus,cs42l71.yaml
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,53 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -34,15 +35,13 @@ index 000000000..111111111
 +
 +description: |
 +  Apple-specific Cirrus Logic headset codec used on the iPhone 6s and 6s
-+  Plus. It is controlled over SPI with the same 5-byte paged register
-+  protocol as the CS42L81. The codec provides the bit and frame clocks
-+  (MCA is the consumer). Speaker amplifiers sit off the codec.
-+
-+  Codec pins for the machine's routing: outputs HPOUT and EAROUT, analog
-+  microphone input AMIC.
++  Plus. It is controlled over SPI with Apple's SPIv2 framed protocol
++  (24-bit little-endian register addresses). Headset PCM is the main
++  port (XSP) on pad 0 / MCA0. The codec's ASP on pad 2 is shared with
++  the loudspeaker amplifier; Linux must not make that port a clock
++  provider. MCLK, when present, is 12 MHz from MCA0.
 +
 +allOf:
-+  - $ref: dai-common.yaml#
 +  - $ref: /schemas/spi/spi-peripheral-props.yaml#
 +
 +properties:
@@ -58,15 +57,9 @@ index 000000000..111111111
 +  clock-names:
 +    const: mclk
 +
-+  '#sound-dai-cells':
-+    const: 0
-+
 +required:
 +  - compatible
 +  - reg
-+  - clocks
-+  - clock-names
-+  - '#sound-dai-cells'
 +
 +unevaluatedProperties: false
 +
@@ -80,9 +73,6 @@ index 000000000..111111111
 +        compatible = "cirrus,cs42l71";
 +        reg = <0>;
 +        spi-max-frequency = <1000000>;
-+        clocks = <&mca0>;
-+        clock-names = "mclk";
-+        #sound-dai-cells = <0>;
 +      };
 +    };
 -- 
