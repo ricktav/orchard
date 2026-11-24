@@ -16,17 +16,18 @@ is not enabled yet: the codec driver is probe-only. No attenuation.
 Assisted-by: LLM
 Signed-off-by: ricktav <82380971+ricktav@users.noreply.github.com>
 ---
- sound/soc/apple/s8000-mca.c | 44 +++++++++++++++++++++++++++++++++++++
- 1 file changed, 44 insertions(+)
+ sound/soc/apple/s8000-mca.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
 
 diff --git a/sound/soc/apple/s8000-mca.c b/sound/soc/apple/s8000-mca.c
 index 00270d00d..cs42l71mca 100644
 --- a/sound/soc/apple/s8000-mca.c
 +++ b/sound/soc/apple/s8000-mca.c
-@@ -1578,9 +1578,43 @@ static const struct s8000_mca_hw t8011_mca_hw = {
+@@ -1578,6 +1578,39 @@ static const struct s8000_mca_hw t8011_mca_hw = {
+ 	.sio_fifo = 0xcc,
  	.sio_trigger = 0xac,
  };
- 
++
 +/*
 + * N66/N71 (iPhone 6s / 6s Plus) MCA0 to the CS42L71 headset codec, from
 + * the ADT's /arm-io/mca0/audio-codec iisConfig (iOS 15.8.8):
@@ -59,13 +60,16 @@ index 00270d00d..cs42l71mca 100644
 +	.sio_fifo = 0x180,
 +	.sio_trigger = 0xc0,
 +};
-+
+ 
  static const struct of_device_id s8000_mca_of_match[] = {
  	{ .compatible = "apple,s5l8960x-mca", .data = &s5l8960x_mca_hw },
+@@ -1588,6 +1621,7 @@ static const struct of_device_id s8000_mca_of_match[] = {
+ 	{ .compatible = "apple,s5l8960x-mca-tdm", .data = &s5l8960x_tdm_mca_hw },
  	{ .compatible = "apple,s8000-mca", .data = &s8000_mca_hw },
 +	{ .compatible = "apple,s8000-mca-cs42l71", .data = &s8000_cs42l71_mca_hw },
  	{ .compatible = "apple,s8000-mca-tdm", .data = &s8000_tdm_mca_hw },
  	{ .compatible = "apple,t7001-mca", .data = &t7001_mca_hw },
  	{ .compatible = "apple,t8011-mca", .data = &t8011_mca_hw },
+ 	{ .compatible = "apple,t8010-mca", .data = &t8010_mca_hw },
 -- 
 2.50.1
