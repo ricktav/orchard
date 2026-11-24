@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ricktav <82380971+ricktav@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 16:52:32 +0100
+Subject: [PATCH] arm64: dts: apple: s5l8960x: Describe the GPU
+
+The A7's G6430: the Rogue core's registers and Fender, the five
+interrupts and the GFX power domain, as Apple's device trees (iOS 12.5.8,
+J71, J85, N51) give them: sgx, compatible gpu,s5l8960x, reg 0x201000000
+and 0x201e00000 (0x100000 each), interrupts 84-88, power gate 0x7c. The
+fifth interrupt is the firmware's, the second of the ADT's
+meta-sw-interrupt tuples (AIC 88). It is on for every A7 board: the
+driver only probes it, and by default touches no GPU register.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/apple/s5l8960x.dtsi | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/s5l8960x.dtsi b/arch/arm64/boot/dts/apple/s5l8960x.dtsi
+index 616ce06a0..cb718b0f8 100644
+--- a/arch/arm64/boot/dts/apple/s5l8960x.dtsi
++++ b/arch/arm64/boot/dts/apple/s5l8960x.dtsi
+@@ -96,6 +96,27 @@ soc {
+ 		nonposted-mmio;
+ 		ranges;
+ 
++		/*
++		 * The G6430 (Apple's G3). Registers, interrupts and power
++		 * gate as Apple's device trees give them (sgx, gpu,s5l8960x):
++		 * the fifth interrupt is the firmware's, the second
++		 * meta-sw-interrupt tuple. powervr only probes it so far.
++		 */
++		gpu: gpu@201000000 {
++			compatible = "apple,s5l8960x-gpu";
++			reg = <0x2 0x01000000 0x0 0x100000>,
++			      <0x2 0x01e00000 0x0 0x100000>;
++			reg-names = "rgx", "fender";
++			power-domains = <&ps_gfx>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 84 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 85 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 86 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 87 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 88 IRQ_TYPE_LEVEL_HIGH>;
++			firmware-name = "apple/gfx-s5l8960x.bin";
++		};
++
+ 		cpufreq: performance-controller@202220000 {
+ 			compatible = "apple,s5l8960x-cluster-cpufreq";
+ 			reg = <0x2 0x02220000 0 0x1000>;
