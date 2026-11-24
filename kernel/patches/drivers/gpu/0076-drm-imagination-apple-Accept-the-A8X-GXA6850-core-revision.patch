@@ -22,16 +22,16 @@ diff --git a/drivers/gpu/drm/imagination/pvr_apple_s8003.c b/drivers/gpu/drm/ima
 index t7000rev..t7001rev 100644
 --- a/drivers/gpu/drm/imagination/pvr_apple_s8003.c
 +++ b/drivers/gpu/drm/imagination/pvr_apple_s8003.c
-@@ -3310,7 +3310,8 @@ static int pvr_apple_s8003_prepare_job(struct pvr_apple *apple, struct pvr_job *job)
- 	* firmware's; "P4"/"P5" are the live iOS objects dumped on that device.
- 	*/
+@@ -3155,7 +3155,8 @@
+  * firmware's; "P4"/"P5" are the live iOS objects dumped on that device.
+  */
  
  /* The core this driver boots: CORE_REVISION major 3, minor 10 (readChipInfo 0x8479d14) */
  #define T7000_CORE_REVISION		0x00030a00
 +#define T7001_CORE_REVISION		0x00070500	/* GXA6850 / G4G */
  
  /* The power manager's registers, from its base (ApplePMGR) */
-@@ -4078,8 +4079,9 @@ static int pvr_apple_t7000_read_gpu_id(struct pvr_apple *apple, struct pvr_gpu_id *gpu_id)
+@@ -3895,8 +3896,9 @@ static int pvr_apple_t7000_read_gpu_id(struct pvr_apple *apple, struct pvr_gpu_id *gpu_id)
  		t7000_stuck(apple, "Fender stuck after the ID read");
  		return err;
  	}
