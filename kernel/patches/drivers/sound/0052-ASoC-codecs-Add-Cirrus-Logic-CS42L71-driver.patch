@@ -34,9 +34,9 @@ index 5d21695a7..aaaaaaaaa 100644
  	imply SND_SOC_CS42L81
  	imply SND_SOC_CS42L84
  	imply SND_SOC_CS4234
-@@ -1032,6 +1033,15 @@ config SND_SOC_CS42L56
+@@ -1027,6 +1028,15 @@ config SND_SOC_CS42L56
  	tristate "Cirrus Logic CS42L56 CODEC"
- 	depends on I2C
+ 	depends on I2C && INPUT
  
 +config SND_SOC_CS42L71
 +	tristate "Cirrus Logic CS42L71 CODEC"
